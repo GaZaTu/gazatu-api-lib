@@ -1,0 +1,19 @@
+{
+  "deno.enable": true,
+  "deno.disablePaths": [
+    "./.deno-cache"
+  ],
+  "deno.lint": true,
+  "deno.unstable": true,
+  "deno.cache": "./.deno-cache",
+  "deno.cacheOnSave": true,
+  "explorer.fileNesting.enabled": true,
+  "explorer.fileNesting.expand": false,
+  "explorer.fileNesting.patterns": {
+    "deno.json": "deno.lock",
+    "*.js": "${capture}.d.ts, ${capture}.wasm",
+  },
+  "files.exclude": {
+    ".deno-cache": true
+  }
+}

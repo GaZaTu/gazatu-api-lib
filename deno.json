@@ -1,0 +1,43 @@
+{
+  "tasks": {
+    "cache": "DENO_DIR=.deno-cache deno cache src/index.ts ; deno cache src/graphql/index.ts"
+  },
+  "imports": {
+    "@oak/oak": "jsr:@oak/oak@^17.1.5",
+    "graphql": "npm:graphql@^16.8.1",
+    "~/src/bundled/": "./src/bundled/"
+  },
+  "compilerOptions": {
+    "strict": true,
+    "strictBindCallApply": true,
+    "strictFunctionTypes": true,
+    "strictNullChecks": true,
+    "noImplicitAny": true,
+    "noImplicitReturns": true,
+    "noImplicitThis": true,
+    "noImplicitOverride": true,
+    "noUncheckedIndexedAccess": true,
+    "noUnusedParameters": false,
+    "noFallthroughCasesInSwitch": true
+  },
+  "lint": {
+    "rules": {
+      "exclude": [
+        "no-empty-pattern",
+        "no-explicit-any",
+        "no-unused-vars"
+      ]
+    }
+  },
+  "fmt": {
+    "semiColons": false,
+    "singleQuote": false,
+    "indentWidth": 2,
+    "useTabs": false,
+    "lineWidth": 160,
+    "include": [
+      "src/"
+    ]
+  },
+  "lock": false
+}
