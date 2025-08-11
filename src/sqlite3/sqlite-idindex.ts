@@ -1,4 +1,4 @@
-import type { SQLite3 } from "./sqlite3/sqlite3.ts"
+import type { SQLite3 } from "./sqlite3.ts"
 
 const defaultIdxTableName = "IdentifierIndex"
 

@@ -32,7 +32,7 @@ const setupDatabase = async () => {
       continue
     }
 
-    const match = /v(\d+).sql$/.exec(dirEntry.name)
+    const match = /^v(\d+).sql$/.exec(dirEntry.name)
     if (!match) {
       continue
     }

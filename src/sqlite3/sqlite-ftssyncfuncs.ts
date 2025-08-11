@@ -1,4 +1,4 @@
-import type { SQLite3 } from "./sqlite3/sqlite3.ts"
+import type { SQLite3 } from "./sqlite3.ts"
 
 const triggerName = (srcTable: string, ftsTable: string, op: "insert" | "update" | "delete") => {
   return `trg_${srcTable}_after_${op}_sync_${ftsTable}`

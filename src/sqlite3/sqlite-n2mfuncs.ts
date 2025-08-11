@@ -1,4 +1,4 @@
-import type { SQLite3 } from "./sqlite3/sqlite3.ts"
+import type { SQLite3 } from "./sqlite3.ts"
 
 const tableName = (table0: string, table1: string) => {
   return `N2M_${table0}_${table1}`

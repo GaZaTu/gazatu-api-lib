@@ -122,3 +122,101 @@ export class UnsafeOutParameter<T extends Deno.NativeType> extends Uint8Array {
     encodeNativeTypeToBytes(this._type, this, value, this._littleEndian)
   }
 }
+
+export class CodedDataView<TArrayBuffer extends ArrayBufferLike = ArrayBufferLike> extends DataView<TArrayBuffer> {
+  public index = 0
+
+  public readonly littleEndian = LITTLE_ENDIAN
+
+  public readonly textEncoder = new TextEncoder()
+  public readonly textDecoder = new TextDecoder()
+
+  encodeInt8(value: number) {
+    this.setInt8(this.index, value)
+    this.index += 1
+  }
+
+  encodeInt16(value: number) {
+    this.setInt16(this.index, value, this.littleEndian)
+    this.index += 2
+  }
+
+  encodeInt32(value: number) {
+    this.setInt32(this.index, value, this.littleEndian)
+    this.index += 4
+  }
+
+  encodeBigInt64(value: number) {
+    this.setBigInt64(this.index, BigInt(value), this.littleEndian)
+    this.index += 8
+  }
+
+  encodeFloat64(value: number) {
+    this.setFloat64(this.index, value, this.littleEndian)
+    this.index += 8
+  }
+
+  encodeText(value: string) {
+    this.encodeInt32(value.length)
+    this.textEncoder.encodeInto(value, new Uint8Array(this.buffer, this.index))
+    this.index += value.length
+  }
+
+  encodeBlob(value: Uint8Array) {
+    this.encodeInt32(value.length)
+    new Uint8Array(this.buffer).set(value, this.index)
+    this.index += value.length
+  }
+
+  encodePointer(value: Deno.PointerValue) {
+    this.encodeBigInt64(Number(Deno.UnsafePointer.value(value)))
+  }
+
+  decodeInt8() {
+    const value = this.getInt8(this.index)
+    this.index += 1
+    return value
+  }
+
+  decodeInt16() {
+    const value = this.getInt16(this.index, this.littleEndian)
+    this.index += 2
+    return value
+  }
+
+  decodeInt32() {
+    const value = this.getInt32(this.index, this.littleEndian)
+    this.index += 4
+    return value
+  }
+
+  decodeBigInt64() {
+    const value = this.getBigInt64(this.index, this.littleEndian)
+    this.index += 8
+    return Number(value)
+  }
+
+  decodeFloat64() {
+    const value = this.getFloat64(this.index, this.littleEndian)
+    this.index += 8
+    return value
+  }
+
+  decodeText() {
+    const length = this.decodeInt32()
+    const value = this.textDecoder.decode(new Uint8Array(this.buffer, this.index, length))
+    this.index += length
+    return value
+  }
+
+  decodeBlob() {
+    const length = this.decodeInt32()
+    const value = new Uint8Array(this.buffer, this.index, length)
+    this.index += length
+    return value
+  }
+
+  decodePointer() {
+    return Deno.UnsafePointer.create(BigInt(this.decodeBigInt64()))
+  }
+}

@@ -169,7 +169,7 @@ const modifyEmscriptenFS = async (FS: EmscriptenModule["FS"]) => {
   const FS_open = FS.open
   FS.open = (path, flags, mode) => {
     if (!preventRecursion) {
-      // console.log("FS_open", path)
+      console.log("FS_open", path)
 
       if (!FS_exists(path)) {
         let realpath = path.replace("//", "")

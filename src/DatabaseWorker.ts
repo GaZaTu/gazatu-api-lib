@@ -4,6 +4,8 @@ import { existsSync } from "node:fs"
 import { dirname } from "node:path"
 import { appdataDir } from "./appinfo.ts"
 import { getStringSimilarity } from "./getStringSimilarity.ts"
+import { CodedDataView } from "./deno-ffi-utils.ts"
+import { ulid } from "jsr:@std/ulid@^1.0.0"
 
 export type SQLQuery = [
   sql: string,
@@ -13,6 +15,7 @@ export type SQLQuery = [
 
 type WorkerMessage = [
   sql: string,
+  params: any[],
   env?: Record<string, string>,
 ]
 
@@ -25,12 +28,15 @@ type WorkerResult = [
 ]
 
 type WorkerInit = [
-  paramsBuffer: SharedArrayBuffer,
   resultBuffer: SharedArrayBuffer,
 ]
 
 const createNewUUID = () => {
   return crypto.randomUUID().replaceAll("-", "")
+}
+
+const createNewULID = () => {
+  return ulid()
 }
 
 export const openDatabase = async (options: { readonly?: boolean, memory?: boolean } = {}) => {
@@ -40,12 +46,13 @@ export const openDatabase = async (options: { readonly?: boolean, memory?: boole
   }
 
   const {
-    SQLite3Ext,
-  } = await import("./sqlite3/sqlite3-extra.ts")
+    SQLite3,
+  } = await import("./sqlite3/sqlite3.ts")
 
-  const db = SQLite3Ext.open(databaseFile, options)
+  const db = SQLite3.open(databaseFile, options)
 
   db.createFunction("new_uuid", {}, createNewUUID)
+  db.createFunction("new_ulid", {}, createNewULID)
   db.createFunction("string_similarity", {}, getStringSimilarity)
 
   const pathToDatabaseFunctions = new URL(import.meta.resolve("~/src/bundled/database-functions.js"))
@@ -64,20 +71,18 @@ export const openDatabase = async (options: { readonly?: boolean, memory?: boole
 
 const WORKER_URL = new URL(import.meta.url)
 if (WORKER_URL.searchParams.has("worker")) {
-  const paramsBuffer = new SharedArrayBuffer(1024 * 1024 * 8)
-  const paramsBytes = new Uint8Array(paramsBuffer)
   const resultBuffer = new SharedArrayBuffer(1024 * 1024 * 8)
-  const resultBytes = new Uint8Array(resultBuffer)
+  const resultView = new CodedDataView(resultBuffer)
 
   const url = new URL(import.meta.url)
   const database = await openDatabase({
     readonly: url.searchParams.get("readonly") === "true",
   })
 
-  self.postMessage([paramsBuffer, resultBuffer] as WorkerInit)
+  self.postMessage([resultBuffer] as WorkerInit)
 
   self.onmessage = (event: MessageEvent<WorkerMessage>) => {
-    const [sql, env] = event.data
+    const [sql, params, env] = event.data
     const result: WorkerResult = []
 
     try {
@@ -89,7 +94,7 @@ if (WORKER_URL.searchParams.has("worker")) {
         }
       }
 
-      statement.allEncoded(paramsBytes, resultBytes)
+      statement.allIntoBuffer(params, resultView)
 
       if (env) {
         for (const [key] of Object.entries(env)) {
@@ -102,6 +107,12 @@ if (WORKER_URL.searchParams.has("worker")) {
           error.message,
           error.stack,
           error.offset,
+        ]
+      } else if (error instanceof Error) {
+        console.log(error)
+        result[0] = [
+          error.message,
+          error.stack,
         ]
       } else {
         result[0] = [
@@ -121,29 +132,22 @@ export class DatabaseError extends Error {
 class DatabaseWorker extends Worker {
   private _ready = Promise.withResolvers<void>()
 
-  private _paramsBuffer = new SharedArrayBuffer(0)
-  private _paramsView!: import("./sqlite3/sqlite3-extra.ts").CodedDataView
   private _resultBuffer = new SharedArrayBuffer(0)
-  private _resultView!: import("./sqlite3/sqlite3-extra.ts").CodedDataView
+  private _resultView = new CodedDataView(this._resultBuffer)
 
-  private _encodeParams!: typeof import("./sqlite3/sqlite3-extra.ts").sqlite3_encode_params
-  private _decodeResult!: typeof import("./sqlite3/sqlite3-extra.ts").sqlite3_decode_result
+  private _decodeResult!: typeof import("./sqlite3/sqlite3.ts").sqlite3_decode_result
 
   private _task?: PromiseWithResolvers<any[]>
 
   public onchange?: (event: { tables: string[] }) => void
 
   private _onConnect = async (event: MessageEvent<WorkerInit>) => {
-    [this._paramsBuffer, this._resultBuffer] = event.data
+    [this._resultBuffer] = event.data
 
     const {
-      CodedDataView,
-      sqlite3_encode_params,
       sqlite3_decode_result,
-    } = await import("./sqlite3/sqlite3-extra.ts")
-    this._paramsView = new CodedDataView(this._paramsBuffer)
+    } = await import("./sqlite3/sqlite3.ts")
     this._resultView = new CodedDataView(this._resultBuffer)
-    this._encodeParams = sqlite3_encode_params
     this._decodeResult = sqlite3_decode_result
 
     this.removeEventListener("message", this._onConnect)
@@ -204,8 +208,7 @@ class DatabaseWorker extends Worker {
 
   async all(...[sql, params, env]: SQLQuery) {
     this._task = Promise.withResolvers()
-    this._encodeParams(this._paramsView, params)
-    this.postMessage([sql, this._paramsBuffer, this._resultBuffer, env])
+    this.postMessage([sql, params, env] as WorkerMessage)
     const result = await this._task!.promise
     return result
   }
