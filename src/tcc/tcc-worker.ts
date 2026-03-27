@@ -42,6 +42,33 @@ const loadTCCBinary = async () => {
   }
 }
 
+const compileTinyCC = async (cwd: string, arch: string) => {
+//   cd /mnt/smoldata/workspace/tinycc
+
+}
+
+const createTinyCCBundle = async () => {
+
+}
+
+const loadTCCGlue = async () => {
+  const { arch } = await import("node:process")
+  switch (arch) {
+  // case "x64":
+  //   return await import("./tinycc-bundle/x86_64-tcc.js")
+  // case "arm64":
+  //   return await import("./tinycc-bundle/arm64-tcc.js")
+  // case "riscv64":
+  //   return await import("./tinycc-bundle/riscv64-tcc.js")
+  case "x64":
+  case "arm64":
+  case "riscv64":
+    return await import("./tcc-glue.js")
+  default:
+    throw new Error(`unsupported tinycc arch '${arch}'`)
+  }
+}
+
 const loadTCCLibraries = async () => {
   return {
     arm64: await import("./tinycc-bundle/arm64-libtcc1.a", { with: { type: "bytes" } }),
@@ -226,7 +253,7 @@ const writeTCCBundle = async (FS: EmscriptenModule["FS"]) => {
 
 const instantiateTCCBinary = async () => {
   const { default: wasmBinary } = await loadTCCBinary()
-  const { default: tcc } = await import("./tcc-glue.js")
+  const { default: tcc } = await loadTCCGlue()
 
   const stdio = createStdIO()
   const tccResult = await tcc({

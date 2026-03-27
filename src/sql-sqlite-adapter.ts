@@ -1,6 +1,6 @@
 import { QueryBuilderData, QueryCompiler, sql, SqlExpr } from "./sql.ts"
 
-export class SqliteQueryCompiler implements QueryCompiler {
+export class SQLite3QueryCompiler implements QueryCompiler {
   compileSelectQuery(data: QueryBuilderData): string {
     let script = "SELECT"
 

@@ -1,29 +1,22 @@
 import { walk } from "jsr:@std/fs@^1.0.19/walk"
 import { ulid } from "jsr:@std/ulid@^1.0.0"
 import fastq from "npm:fastq@^1.19.1"
-import DatabaseWorker, { DatabaseError, SQLQuery, openDatabase } from "./DatabaseWorker.ts"
+import { DatabaseWorker } from "./DatabaseWorker.ts"
 import { PubSub } from "./graphql/graphql-subscriptions.ts"
-import { SqliteQueryCompiler } from "./sql-sqlite-adapter.ts"
+import { SQLite3QueryCompiler } from "./sql-sqlite-adapter.ts"
 import { DatabaseAccess } from "./sql.ts"
-import { registerAuditLogFunctions } from "./sqlite3/sqlite-auditlogfuncs.ts"
-import { registerFTSSyncFunctions } from "./sqlite3/sqlite-ftssyncfuncs.ts"
-import { registerMiscFunctions } from "./sqlite3/sqlite-misc.ts"
-import { registerN2MFunctions } from "./sqlite3/sqlite-n2mfuncs.ts"
+import { SQLite3 } from "./sqlite3/SQLite3.ts"
+import { SQLQuery } from "./sqlite3/SQLite3FastQuery.ts"
 
 const setupDatabase = async () => {
-  using database = await openDatabase()
+  using database = await SQLite3.open()
   console.log(`using SQLite version ${database.libversion}`)
 
   if (database.libversion_number < 3038000) {
     throw new Error("minimum required SQLite version is 3.38.0")
   }
 
-  registerAuditLogFunctions(database)
-  registerFTSSyncFunctions(database)
-  registerMiscFunctions(database)
-  registerN2MFunctions(database)
-
-  const sqlDir = "~/src/bundled/sql"
+  const sqlDir = "~/bundled/sql"
   const sqlDirUrl = new URL(import.meta.resolve(sqlDir))
 
   const upgradeScripts = []
@@ -60,7 +53,7 @@ const setupDatabase = async () => {
         const script = await Deno.readTextFile(upgradeScript.url)
 
         database.transaction(() => {
-          database.execute(script)
+          database.exec(script)
           database.user_version = (version = upgradeScript.version)
         })
       } catch (error) {
@@ -74,26 +67,26 @@ const setupDatabase = async () => {
     }
   }
 
-  database.execute("PRAGMA optimize")
-  database.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+  database.exec("PRAGMA optimize")
+  database.exec("PRAGMA wal_checkpoint(TRUNCATE)")
 }
 
-const createEnqueFunction = (queue: fastq.queueAsPromised<SQLQuery, any[]>) => {
+const createEnqueueFunction = (queue: fastq.queueAsPromised<SQLQuery, any[]>) => {
   return async (...task: SQLQuery) => {
     try {
       return await queue.push(task)
     } catch (cause: any) {
-      const error = new DatabaseError(cause.message, { cause })
-      if (cause instanceof DatabaseError) {
-        error.offset = cause.offset
-      }
+      const error = new Error(cause.message, { cause })
+      // if (cause instanceof DatabaseError) {
+      //   error.offset = cause.offset
+      // }
       throw error
     }
   }
 }
 
 const createReader = async () => {
-  const readerConcurrency = 2
+  const readerConcurrency = 3
   const readers = [] as DatabaseWorker[]
 
   while (readers.length < readerConcurrency) {
@@ -112,44 +105,51 @@ const createReader = async () => {
   }
 
   const readQueue = fastq.promise(readWork, readerConcurrency)
-  const readAll = createEnqueFunction(readQueue)
+  const readAll = createEnqueueFunction(readQueue)
 
   return readAll
 }
 
-const createWriter = async () => {
+const createWriter = async (onchange: (payload: { tables: string[] }) => void) => {
   const writerConcurrency = 1
   const writer = new DatabaseWorker()
   await writer.ready
 
-  writer.onchange = payload => {
-    database.clearCache(...payload.tables)
-    setTimeout(() => {
-      databaseHooks.publish("change", payload)
-    })
-  }
+  writer.onchange = onchange
 
   const writeWork = (task: SQLQuery) => {
     return writer.all(...task)
   }
 
   const writeQueue = fastq.promise(writeWork, writerConcurrency)
-  const writeAll = createEnqueFunction(writeQueue)
+  const writeAll = createEnqueueFunction(writeQueue)
 
   return writeAll
 }
 
-export const database = new DatabaseAccess({
-  compiler: new SqliteQueryCompiler(),
-  createReader: async () => {
-    await setupDatabase()
-    return await createReader()
-  },
-  createWriter,
-  newid: ulid,
-  enableCache: true,
-})
+export class LocalSQLite3DatabaseAccess extends DatabaseAccess {
+  readonly hooks = new PubSub<{
+    "change": { tables: string[] }
+  }>()
 
-export const databaseHooks = new PubSub<{
-  "change": { tables: string[] }
-}>()
+  constructor() {
+    super({
+      compiler: new SQLite3QueryCompiler(),
+      createReader: async () => {
+        await setupDatabase()
+        return await createReader()
+      },
+      createWriter: async () => {
+        const onchange = (payload: { tables: string[] }) => {
+          this.clearCache(...payload.tables)
+          setTimeout(() => {
+            this.hooks.publish("change", payload)
+          })
+        }
+        return await createWriter(onchange)
+      },
+      newid: ulid,
+      enableCache: true,
+    })
+  }
+}

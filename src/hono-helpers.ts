@@ -1,5 +1,9 @@
-import { createHttpError, Status, type Context, type Middleware } from "@oak/oak"
+import { Context, MiddlewareHandler } from "hono"
+import { getConnInfo } from "hono/deno"
+import { HTTPException } from "hono/http-exception"
 import { cyan, green, red, yellow } from "jsr:@std/fmt@^1.0.8/colors"
+import { freemem, loadavg, totalmem } from "node:os"
+import { memoryUsage } from "node:process"
 
 const X_RESPONSE_TIME = "X-Response-Time"
 
@@ -19,23 +23,38 @@ const getColorForHttpStatus = (status: number) => {
   return red
 }
 
-export const oakLogger = (mode: "simple" | "full" = "simple"): Middleware => {
-  const fullLogging = mode === "full"
+export const honoSetIp = (behindReverseProxy = false): MiddlewareHandler => {
+  if (behindReverseProxy) {
+    return async (ctx, next) => {
+      ctx.set("IP", ctx.req.header("X-Forwarded-For"))
+      await next()
+    }
+  } else {
+    return async (ctx, next) => {
+      ctx.set("IP", getConnInfo(ctx).remote.address)
+      await next()
+    }
+  }
+}
 
+export const honoResponseTime = (): MiddlewareHandler => {
+  return async (ctx, next) => {
+    const start = Date.now()
+    try {
+      await next()
+    } finally {
+      const ms = Date.now() - start
+      ctx.res.headers.set(X_RESPONSE_TIME, `${ms}ms`)
+    }
+  }
+}
+
+export const honoLogger = (): MiddlewareHandler => {
   const makeLogString = (ctx: Context, msg: string, date = new Date()) => {
-    const { ip, method, url } = ctx.request
-    return `[${date.toISOString()} oak] ${ip} "${method} ${url.pathname}" ${msg}`
+    return `[${date.toISOString()} http] ${ctx.get("IP")} "${ctx.req.method} ${ctx.req.path}" ${msg}`
   }
 
   return async (ctx, next) => {
-    ctx.state._log ??= []
-
-    const start = new Date()
-
-    if (fullLogging) {
-      console.log(makeLogString(ctx, "begin", start))
-    }
-
     let status = undefined as number | undefined
     try {
       await next()
@@ -43,59 +62,40 @@ export const oakLogger = (mode: "simple" | "full" = "simple"): Middleware => {
       status = error.status ?? undefined
       throw error
     } finally {
-      status = status ?? ctx.response.status
+      status = status ?? ctx.res.status ?? 500
 
-      const responseTime = ctx.response.headers.get(X_RESPONSE_TIME)
+      const responseTime = ctx.res.headers.get(X_RESPONSE_TIME)
 
-      let logString = makeLogString(ctx, `${status} ${responseTime}`, fullLogging ? start : undefined)
-      if (fullLogging) {
-        logString = getColorForHttpStatus(status)(logString)
-      }
-
-      console.group(logString)
-      for (const detail of ctx.state._log) {
-        console.log(detail)
-      }
-      console.groupEnd()
+      const logString = makeLogString(ctx, `${getColorForHttpStatus(status)(String(status)) } ${responseTime}`)
+      console.log(logString)
     }
   }
 }
 
-export const oakResponseTime = (): Middleware => {
-  return async (ctx, next) => {
-    const start = Date.now()
-    try {
-      await next()
-    } finally {
-      const ms = Date.now() - start
-      ctx.response.headers.set(X_RESPONSE_TIME, `${ms}ms`)
-    }
-  }
-}
-
-export const oakJsonError = (options?: { pretty?: boolean, stacktrace?: boolean }): Middleware => {
+export const honoJsonError = (options?: { stacktrace?: boolean }): MiddlewareHandler => {
   return async (ctx, next) => {
     try {
       await next()
 
-      if (!ctx.response.status || (ctx.response.status === Status.NotFound && !ctx.response.body)) {
-        ctx.throw(Status.NotFound)
+      if (!ctx.res.status || ctx.res.status === 404) {
+        throw new HTTPException(404)
       }
+
+      return undefined
     } catch (error: any) {
-      ctx.response.status = error.status ?? Status.InternalServerError
-      ctx.response.type = "application/json"
-      ctx.response.body = JSON.stringify({
+      const status = error.status ?? 500
+      if (status === 500) {
+        console.error(error)
+      }
+
+      return ctx.json({
         errors: [{
           name: error.name,
           message: error.message,
           status: error.status,
           stack: options?.stacktrace ? error.stack : undefined,
         }],
-      }, undefined, options?.pretty ? "  " : undefined)
-
-      // if (ctx.response.status === Status.InternalServerError) {
-      //   console.error(error)
-      // }
+      }, status)
     }
   }
 }
@@ -117,9 +117,9 @@ if (Deno.cron) {
 
 const addLoadInfo = (start: Date) => {
   const msSpent = Date.now() - start.getTime()
-  const load = Deno.loadavg()[0] ?? 0
-  const memoryFree = Deno.systemMemoryInfo().available / 1024 / 1024 / 1024
-  const memoryUsage = Deno.memoryUsage().rss / 1024 / 1024 / 1024
+  const load = loadavg()[0] ?? 0
+  const memoryFree = freemem() / 1024 / 1024 / 1024
+  const _memoryUsage = memoryUsage.rss() / 1024 / 1024 / 1024
 
   const hour = start.getUTCHours()
   const minute = start.getUTCMinutes()
@@ -133,11 +133,11 @@ const addLoadInfo = (start: Date) => {
     msSpent: requestsThisMinute.msSpent + msSpent,
     load: requestsThisMinute.load + load,
     memoryFree: requestsThisMinute.memoryFree + memoryFree,
-    memoryUsage: requestsThisMinute.memoryUsage + memoryUsage,
+    memoryUsage: requestsThisMinute.memoryUsage + _memoryUsage,
   })
 }
 
-export const oakLoadCounter = (): Middleware => {
+export const honoLoadCounter = (): MiddlewareHandler => {
   return async (ctx, next) => {
     const start = new Date()
     try {
@@ -165,7 +165,7 @@ type AverageLoadInfo = {
   averageUsedMemoryInGB: number
 }
 
-export const getOakServerLoad = (): AverageLoadInfo[] => {
+export const getHonoServerLoad = (): AverageLoadInfo[] => {
   const result = [] as AverageLoadInfo[]
 
   const currentDate = new Date()
@@ -218,7 +218,7 @@ export const getOakServerLoad = (): AverageLoadInfo[] => {
     timestamp.setUTCSeconds(0)
     timestamp.setUTCMilliseconds(0)
 
-    const totalMemoryInGB = Deno.systemMemoryInfo().total / 1024 / 1024 / 1024
+    const totalMemoryInGB = totalmem() / 1024 / 1024 / 1024
 
     result.push({
       timestamp: timestamp.toISOString(),
@@ -234,8 +234,8 @@ export const getOakServerLoad = (): AverageLoadInfo[] => {
   return result
 }
 
-export const getCurrentOakServerLoad = (isRetry = false): AverageLoadInfo => {
-  const load = getOakServerLoad()
+export const getCurrentHonoServerLoad = (isRetry = false): AverageLoadInfo => {
+  const load = getHonoServerLoad()
   const currentLoad = load.find(l => new Date(l.timestamp).getUTCHours() === new Date().getUTCHours())
   if (!currentLoad) {
     throw new Error()
@@ -245,12 +245,12 @@ export const getCurrentOakServerLoad = (isRetry = false): AverageLoadInfo => {
   }
   if (currentLoad.averageSystemLoad === 0) {
     addLoadInfo(new Date())
-    return getCurrentOakServerLoad(true)
+    return getCurrentHonoServerLoad(true)
   }
   return currentLoad
 }
 
-export const oakRateLimiter = (opts: { window: number, rate: number, burst: number }): Middleware => {
+export const honoRateLimiter = (opts: { window: number, rate: number, burst: number }): MiddlewareHandler => {
   const counts = new Map<string, number>()
   let start = Date.now()
 
@@ -263,12 +263,12 @@ export const oakRateLimiter = (opts: { window: number, rate: number, burst: numb
 
     const seconds = (now - start) / 1000
 
-    const count = counts.get(ctx.request.ip) ?? 0
+    const count = counts.get(ctx.get("IP")) ?? 0
     if (count > opts.burst && (count / seconds) > opts.rate) {
-      throw createHttpError(Status.TooManyRequests)
+      throw new HTTPException(429)
     }
 
-    counts.set(ctx.request.ip, count + 1)
+    counts.set(ctx.get("IP"), count + 1)
 
     await next()
   }

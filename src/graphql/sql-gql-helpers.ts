@@ -1,21 +1,30 @@
 import { GraphQLResolveInfo } from "graphql"
-// @deno-types="npm:@types/graphql-fields@1.3.9"
-import graphqlFields from "npm:graphql-fields@2.0.3"
-import { defineGraphQLEnum, gqlclass, gqlprop, listOf, nullable } from "./graphql-typed.ts"
+// @deno-types="npm:@types/graphql-fields"
+import graphqlFields from "npm:graphql-fields@^2.0.3"
+import { arrayOf, Constructor, nullable, RunTyped } from "../runtyped.ts"
 import { Selector, sql } from "../sql.ts"
-import { sanitizeWebSearch } from "../sqlite3/sqlite-sanitizewebsearch.ts"
+import { declareGraphQLEnum, gqlclass } from "./graphql-typed.ts"
 
-const SortDirection = defineGraphQLEnum("SortDirection", [
+const SortDirectionOptions = [
   "ASC",
   "DESC",
-] as const)
+] as const
+
+const SortDirection = declareGraphQLEnum("SortDirection", SortDirectionOptions)
+
+type SortDirections = (typeof SortDirection) extends Constructor<infer X> ? X : never
 
 @gqlclass(undefined, { only: "input" })
 class Sorting {
-  @gqlprop(String)
+  @RunTyped.field(String, {
+    gql: {},
+  })
   col!: string
-  @gqlprop(SortDirection)
-  dir!: (typeof SortDirection)["ofOptions"]
+
+  @RunTyped.field(SortDirection, {
+    gql: {},
+  })
+  dir!: SortDirections
 }
 
 export const gqlSortingArgs = {
@@ -32,9 +41,14 @@ export const gqlSearchArgs = {
 
 @gqlclass(undefined, { only: "input" })
 class Window {
-  @gqlprop(Number, { defaultValue: 0 })
+  @RunTyped.field(Number, {
+    gql: { defaultValue: 0 },
+  })
   offset!: number
-  @gqlprop(Number, { defaultValue: 25 })
+
+  @RunTyped.field(Number, {
+    gql: { defaultValue: 25 },
+  })
   limit!: number
 }
 
@@ -44,8 +58,6 @@ export const gqlPaginationArgs = {
   },
 }
 
-type Constructor<T = any> = abstract new (...args: any) => T
-
 const knownPaginationTypes = new Map<Constructor, Constructor>()
 
 export const paginationOf = <T>(ofType: Constructor<T>) => {
@@ -53,11 +65,19 @@ export const paginationOf = <T>(ofType: Constructor<T>) => {
   if (!existing) {
     @gqlclass(`${ofType.name}ListConnection`)
     class Pagination {
-      @gqlprop(listOf(ofType))
+      @RunTyped.field(arrayOf(ofType), {
+        gql: {},
+      })
       slice!: T[]
-      @gqlprop(Number)
+
+      @RunTyped.field(Number, {
+        gql: {},
+      })
       pageIndex!: number
-      @gqlprop(Number)
+
+      @RunTyped.field(Number, {
+        gql: {},
+      })
       pageCount!: number
     }
 
@@ -82,22 +102,17 @@ export const sqliteWebSearch = (search: string | null | undefined, defaultSearch
       return selector
     }
 
-    const searchSanitized = sanitizeWebSearch(search)
-    if (!searchSanitized) {
-      return selector
-    }
-
     const srcTable = selector.$meta.selectedTables[0]
     const ftsTable = sql.tbl(`${srcTable?.name}FTS`)
 
     return selector
       .join(ftsTable, "_fts").on(sql.expr(`_fts.rowid = ${srcTable?.alias}.rowid`))
-      .where(sql`${ftsTable} MATCH ${searchSanitized}`)
+      .where(sql`${ftsTable} MATCH sanitize_websearch(${search})`)
       .orderBy(sql.expr("_fts.rank"), "ASC") as any
   }
 }
 
-export const sqliteWebSort = (sort: { col: string, dir: "ASC" | "DESC" } | null | undefined, defaultSort?: { col: string, dir: "ASC" | "DESC" } | null | undefined) => {
+export const sqliteWebSort = (sort: { col: string, dir: SortDirections } | null | undefined, defaultSort?: { col: string, dir: SortDirections } | null | undefined) => {
   if (!sort) {
     sort = defaultSort
   }
@@ -111,7 +126,7 @@ export const sqliteWebSort = (sort: { col: string, dir: "ASC" | "DESC" } | null 
       throw new Error("invalid sort col")
     }
 
-    if (!["ASC", "DESC"].includes(sort.dir)) {
+    if (!SortDirectionOptions.includes(sort.dir)) {
       throw new Error("invalid sort dir")
     }
 

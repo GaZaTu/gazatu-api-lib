@@ -1,21 +1,17 @@
-import { Request, Status, createHttpError } from "@oak/oak"
+import { HTTPException } from "hono/http-exception"
+import { HonoRequest } from "hono/request"
 import { JWT } from "./jwt.ts"
 
 const currentUserSymbol = Symbol()
 const currentUserFailedSymbol = Symbol()
 
 interface IUserRole {
-  name: string
+  readonly name: string
 }
 
-interface IUser<UserRole extends IUserRole = IUserRole> {
-  id: any
-  roles: UserRole[]
-}
-
-interface IUserInput {
-  id?: any
-  roles?: IUserRole[]
+interface IUser {
+  readonly id: any
+  readonly roles: IUserRole[]
 }
 
 export class AuthorizationHelper<User extends IUser> {
@@ -25,7 +21,7 @@ export class AuthorizationHelper<User extends IUser> {
     public readonly findUser: (userId: any) => Promise<User | undefined>,
   ) { }
 
-  async findUserByRequest(request: Request | undefined) {
+  async findUserByRequest(request: HonoRequest | undefined) {
     if (!request) {
       return undefined
     }
@@ -41,7 +37,7 @@ export class AuthorizationHelper<User extends IUser> {
       return existing
     }
 
-    const authHeader = request.headers.get("Authorization")
+    const authHeader = request.header("Authorization")
     if (!authHeader) {
       cache[currentUserFailedSymbol] = true
       return undefined
@@ -78,12 +74,12 @@ export class AuthorizationHelper<User extends IUser> {
     return result
   }
 
-  async hasAuth(user: IUserInput | Request | undefined, neededRoles: string[] = []) {
+  async hasAuth(user: Partial<IUser> | HonoRequest | undefined, neededRoles: string[] = []) {
     if (!user) {
       return true
     }
 
-    if (user instanceof Request) {
+    if (user instanceof HonoRequest) {
       user = await this.findUserByRequest(user)
       if (!user) {
         return false
@@ -107,12 +103,16 @@ export class AuthorizationHelper<User extends IUser> {
     return true
   }
 
-  async assertAuth(user: IUserInput | Request | undefined, neededRoles?: string[]) {
+  async assertAuth(user: Partial<IUser> | HonoRequest | undefined, neededRoles?: string[]) {
     if (!await this.hasAuth(user, neededRoles)) {
       if (neededRoles?.length) {
-        throw createHttpError(Status.Forbidden, `Required user roles: ${neededRoles?.join(", ")}.`)
+        throw new HTTPException(403, {
+          message: `Required user roles: ${neededRoles?.join(", ")}.`,
+        })
       } else {
-        throw createHttpError(Status.Unauthorized, "You need to be logged in to access this resource.")
+        throw new HTTPException(401, {
+          message: "You need to be logged in to access this resource.",
+        })
       }
     }
   }

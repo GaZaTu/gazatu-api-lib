@@ -1,5 +1,5 @@
 import { GraphQLFieldConfig, GraphQLFieldConfigArgumentMap, GraphQLObjectType, GraphQLSchema, ThunkObjMap } from "graphql"
-import { stitchSchemas as _stitchSchemas } from "npm:@graphql-tools/stitch@9.4.27"
+import { stitchSchemas as _stitchSchemas } from "npm:@graphql-tools/stitch@^9.4.27"
 
 export type TypedGraphQLResolverMap<C> = {
   Query?: ThunkObjMap<GraphQLFieldConfig<Record<any, any>, C, any>>

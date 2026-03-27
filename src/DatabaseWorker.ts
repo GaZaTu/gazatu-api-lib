@@ -1,22 +1,12 @@
 declare const self: Worker
 
-import { existsSync } from "node:fs"
-import { dirname } from "node:path"
-import { appdataDir } from "./appinfo.ts"
-import { getStringSimilarity } from "./getStringSimilarity.ts"
-import { CodedDataView } from "./deno-ffi-utils.ts"
-import { ulid } from "jsr:@std/ulid@^1.0.0"
-
-export type SQLQuery = [
-  sql: string,
-  params: any[],
-  env?: Record<string, string>,
-]
+import { SQLOutputValue } from "node:sqlite"
+import { SQLite3 } from "./sqlite3/SQLite3.ts"
+import { SQLite3FastQuery, SQLQuery } from "./sqlite3/SQLite3FastQuery.ts"
 
 type WorkerMessage = [
-  sql: string,
-  params: any[],
-  env?: Record<string, string>,
+  inputPtr: bigint,
+  outputPtr: bigint,
 ]
 
 type WorkerResult = [
@@ -27,88 +17,22 @@ type WorkerResult = [
   ],
 ]
 
-type WorkerInit = [
-  resultBuffer: SharedArrayBuffer,
-]
-
-const createNewUUID = () => {
-  return crypto.randomUUID().replaceAll("-", "")
-}
-
-const createNewULID = () => {
-  return ulid()
-}
-
-export const openDatabase = async (options: { readonly?: boolean, memory?: boolean } = {}) => {
-  const databaseFile = options.memory ? ":memory:" : `${appdataDir}/database.sqlite3`
-  if (!options.memory) {
-    await Deno.mkdir(dirname(databaseFile), { recursive: true })
-  }
-
-  const {
-    SQLite3,
-  } = await import("./sqlite3/sqlite3.ts")
-
-  const db = SQLite3.open(databaseFile, options)
-
-  db.createFunction("new_uuid", {}, createNewUUID)
-  db.createFunction("new_ulid", {}, createNewULID)
-  db.createFunction("string_similarity", {}, getStringSimilarity)
-
-  const pathToDatabaseFunctions = new URL(import.meta.resolve("~/src/bundled/database-functions.js"))
-  if (existsSync(pathToDatabaseFunctions)) {
-    const functionsModule = await Deno.readTextFile(pathToDatabaseFunctions)
-    const functions = await import(`data:text/javascript,${encodeURIComponent(functionsModule)}`)
-    for (const [name, func] of Object.entries(functions)) {
-      if (typeof func === "function") {
-        db.createFunction(name, {}, func as any)
-      }
-    }
-  }
-
-  return db
-}
-
 const WORKER_URL = new URL(import.meta.url)
 if (WORKER_URL.searchParams.has("worker")) {
-  const resultBuffer = new SharedArrayBuffer(1024 * 1024 * 8)
-  const resultView = new CodedDataView(resultBuffer)
-
-  const url = new URL(import.meta.url)
-  const database = await openDatabase({
-    readonly: url.searchParams.get("readonly") === "true",
+  const database = await SQLite3.open(undefined, {
+    readonly: WORKER_URL.searchParams.has("readonly"),
   })
 
-  self.postMessage([resultBuffer] as WorkerInit)
+  self.postMessage(null)
 
   self.onmessage = (event: MessageEvent<WorkerMessage>) => {
-    const [sql, params, env] = event.data
+    const [inputPtr, outputPtr] = event.data
     const result: WorkerResult = []
 
     try {
-      const statement = database.prepare(sql, { persistent: true })
-
-      if (env) {
-        for (const [key, value] of Object.entries(env)) {
-          database.setenv(key, value)
-        }
-      }
-
-      statement.allIntoBuffer(params, resultView)
-
-      if (env) {
-        for (const [key] of Object.entries(env)) {
-          database.setenv(key, null)
-        }
-      }
+      database.selectEncoded(inputPtr, outputPtr)
     } catch (error: any) {
-      if (error instanceof database.Error) {
-        result[0] = [
-          error.message,
-          error.stack,
-          error.offset,
-        ]
-      } else if (error instanceof Error) {
+      if (error instanceof Error) {
         console.log(error)
         result[0] = [
           error.message,
@@ -125,31 +49,16 @@ if (WORKER_URL.searchParams.has("worker")) {
   }
 }
 
-export class DatabaseError extends Error {
-  offset?: number
-}
-
-class DatabaseWorker extends Worker {
+export class DatabaseWorker extends Worker implements Disposable {
   private _ready = Promise.withResolvers<void>()
 
-  private _resultBuffer = new SharedArrayBuffer(0)
-  private _resultView = new CodedDataView(this._resultBuffer)
+  private _task?: PromiseWithResolvers<Record<string, SQLOutputValue>[]>
 
-  private _decodeResult!: typeof import("./sqlite3/sqlite3.ts").sqlite3_decode_result
-
-  private _task?: PromiseWithResolvers<any[]>
+  private _query = new SQLite3FastQuery()
 
   public onchange?: (event: { tables: string[] }) => void
 
-  private _onConnect = async (event: MessageEvent<WorkerInit>) => {
-    [this._resultBuffer] = event.data
-
-    const {
-      sqlite3_decode_result,
-    } = await import("./sqlite3/sqlite3.ts")
-    this._resultView = new CodedDataView(this._resultBuffer)
-    this._decodeResult = sqlite3_decode_result
-
+  private _onConnect = () => {
     this.removeEventListener("message", this._onConnect)
     this.addEventListener("message", this._onMessage)
     this._ready.resolve()
@@ -162,31 +71,28 @@ class DatabaseWorker extends Worker {
     this._task = undefined
 
     if (errorData) {
-      const cause = new DatabaseError(errorData[0])
+      const cause = new Error(errorData[0])
       cause.stack = errorData[1]
-      cause.offset = errorData[2]
 
-      const error = new DatabaseError(cause.message, { cause })
-      error.offset = cause.offset
+      const error = new Error(cause.message, { cause })
       reject(error)
       return
     }
 
     const {
       rows,
-      updates,
-      changes,
-    } = this._decodeResult(this._resultView)
+      updatedTables,
+    } = this._query.decodeOutput()
 
-    if (updates.length) {
+    if (updatedTables.length) {
       this.onchange?.({
-        tables: [...new Set(updates)].filter(t => !t.startsWith("FTS_")),
+        tables: updatedTables,
       })
     }
 
-    if (!rows.length && changes) {
-      rows.push({ changes })
-    }
+    // if (!rows.length && changes) {
+    //   rows.push({ changes })
+    // }
 
     resolve(rows)
   }
@@ -206,9 +112,11 @@ class DatabaseWorker extends Worker {
     this.terminate()
   }
 
-  async all(...[sql, params, env]: SQLQuery) {
+  async all(...[sql, args, env]: SQLQuery) {
+    this._query.encodeInput(sql, args, env)
+    this.postMessage([this._query.inputPtr, this._query.outputPtr] as WorkerMessage)
+
     this._task = Promise.withResolvers()
-    this.postMessage([sql, params, env] as WorkerMessage)
     const result = await this._task!.promise
     return result
   }
@@ -221,5 +129,3 @@ class DatabaseWorker extends Worker {
     return !this._task
   }
 }
-
-export default DatabaseWorker

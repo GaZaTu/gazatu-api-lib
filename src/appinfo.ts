@@ -21,31 +21,20 @@ export const appDir = (() => {
   }
 })()
 
+Deno.env.set("APP", appDir)
+
 export const appdataDir = Deno.env.get("APPDATA_OVERRIDE") ?? resolve(appDir, "data")
 await Deno.mkdir(appdataDir, { recursive: true })
 
-const replaceVariablesInConfig = (config: any) => {
-  for (const [key, value] of Object.entries(config)) {
-    switch (typeof value) {
-    case "string":
-      config[key] = value
-        .replaceAll("$APPDATA", appdataDir)
-        .replaceAll("$APP", appDir)
-      break
-    case "object":
-      replaceVariablesInConfig(value ?? {})
-      break
-    }
-  }
-}
+Deno.env.set("APPDATA", appdataDir)
 
-export const readConfigFile = <T extends Record<string, any>>(): Partial<T> => {
+export const readConfigFile = <T extends Record<string, any>>(): T => {
   try {
     const configJson = Deno.readTextFileSync(`${appdataDir}/config.jsonc`)
+      .replaceAll(/\${(\w+)}/gm, (_, g0) => Deno.env.get(g0) ?? "")
     const config = jsonc.parse(configJson) as Record<string, any>
-    replaceVariablesInConfig(config)
-    return config as Partial<T>
+    return config as any
   } catch {
-    return {}
+    return {} as any
   }
 }

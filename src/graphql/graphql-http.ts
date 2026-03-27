@@ -1,16 +1,18 @@
-import { Context, HttpError, Request, Router, Status } from "@oak/oak"
 import { ExecutionResult, GraphQLError } from "graphql"
-import { appdataDir } from "../appinfo.ts"
 import { JSONPath } from "../json-path.ts"
 import { GraphQLCompiledExecutor, GraphQLCompiler, GraphQLCompilerConfig, GraphQLRequest } from "./graphql-jit.ts"
+import { HTTPException } from "hono/http-exception"
+import { Context, Hono, HonoRequest } from "hono"
+import { accepts } from "hono/accepts"
+import { streamSSE } from "hono/streaming"
 
 export type GraphQLRouterConfig<C extends Record<string, any> = any> = GraphQLCompilerConfig & {
   path: string
-  createContext: (request: Request | undefined) => C | Promise<C>
+  createContext: (request: HonoRequest | undefined) => C | Promise<C>
 }
 
 export type GraphQLRouterContext = {
-  readonly request?: Request
+  readonly request?: HonoRequest
   readonly cache: {
     [key: string | symbol]: any
   }
@@ -46,24 +48,24 @@ const parseGraphQLFormData = (formdata: FormData) => {
 
 const getHttpStatusFromGraphQLErrors = (errors?: readonly GraphQLError[]) => {
   if (!errors?.length) {
-    return Status.OK
+    return 200
   }
   for (const error of errors) {
     let originalError = error.originalError
     while (originalError instanceof GraphQLError) {
       originalError = originalError.originalError
     }
-    if (originalError instanceof HttpError) {
+    if (originalError instanceof HTTPException) {
       return originalError.status
     }
   }
-  return Status.InternalServerError
+  return 500
 }
 
 /**
  * mostly compatible with https://github.com/graphql/graphql-over-http/blob/main/spec/GraphQLOverHTTP.md
  */
-export class GraphQLRouter<C extends Record<string, any> = any> extends Router {
+export class GraphQLRouter<C extends Record<string, any> = any> extends Hono {
   private _compiler: GraphQLCompiler
 
   constructor(
@@ -122,131 +124,141 @@ export class GraphQLRouter<C extends Record<string, any> = any> extends Router {
   }
 
   private registerGraphQLRoutes() {
-    this.get(`${this._config.path}/schema.gql`, async ctx => {
-      ctx.response.type = "application/graphql"
-      ctx.response.body = await Deno.readTextFile(`${appdataDir}/schema.gql`)
-    })
+    // this.get(`${this._config.path}/schema.gql`, async ctx => {
+    //   ctx.response.type = "application/graphql"
+    //   ctx.response.body = await Deno.readTextFile(`${appdataDir}/schema.gql`)
+    // })
 
-    this.get(`${this._config.path}/schema.gql.ts`, async ctx => {
-      ctx.response.type = "application/typescript"
-      ctx.response.body = await Deno.readTextFile(`${appdataDir}/schema.gql.ts`)
-    })
+    // this.get(`${this._config.path}/schema.gql.ts`, async ctx => {
+    //   ctx.response.type = "application/typescript"
+    //   ctx.response.body = await Deno.readTextFile(`${appdataDir}/schema.gql.ts`)
+    // })
 
     this.post(this._config.path, async ctx => {
       let body = null as GraphQLRequest | null
-      switch (ctx.request.body.type()) {
+      switch (ctx.req.header("Content-Type")) {
       case "form-data":
         try {
-          body = parseGraphQLFormData(await ctx.request.body.formData())
+          body = parseGraphQLFormData(await ctx.req.formData())
         } catch (error: any) {
-          throw ctx.throw(Status.BadRequest, error.message)
+          throw new HTTPException(400, error)
         }
         break
       default:
-        body = await ctx.request.body.json()
+        body = await ctx.req.json()
         break
       }
 
-      await this.handleGraphQLRequest(ctx, body!)
+      return await this.handleGraphQLRequest(ctx, body!)
     })
 
     this.get(this._config.path, async ctx => {
       const operationName = "GET" // MUST BE STATIC
 
-      let query = ctx.request.url.searchParams.get("query")
+      let query = ctx.req.query("query")
       if (!query?.startsWith("{") || !query?.endsWith("}")) {
-        throw ctx.throw(Status.BadRequest, "Expected parameter format: ?query={/* graphql */}")
+        throw new HTTPException(400, {
+          message: "Expected parameter format: ?query={/* graphql */}",
+        })
       }
       query = `query ${operationName} ${query}`
 
-      const variables = JSON.parse(ctx.request.url.searchParams.get("variables") ?? "{}")
+      const variables = JSON.parse(ctx.req.query("variables") ?? "{}")
 
-      await this.handleGraphQLRequest(ctx, { query, variables, operationName })
+      return await this.handleGraphQLRequest(ctx, { query, variables, operationName })
     })
   }
 
   private async handleGraphQLRequest(ctx: Context, request: GraphQLRequest) {
     if (!request.query) {
-      throw ctx.throw(Status.BadRequest, "GraphQLRequest.query is invalid")
+      throw new HTTPException(400, {
+        message: "GraphQLRequest.query is invalid",
+      })
     }
 
-    let accept = ctx.request.accepts("application/graphql-response+json", "application/json", "text/event-stream")
-    if (!accept) {
-      accept = "application/json"
-    }
+    const accept = accepts(ctx, {
+      header: "Accept",
+      default: "application/json",
+      supports: ["application/json", "application/graphql-response+json", "text/event-stream"],
+    })
 
-    let charset = ctx.request.acceptsEncodings("utf-8")
-    if (!charset) {
-      charset = "utf-8"
-    }
+    // const charset = accepts(ctx, {
+    //   header: "Accept-Encoding",
+    //   default: "utf-8",
+    //   supports: ["utf-8"],
+    // })
 
-    let response: ExecutionResult<unknown, Record<string, unknown>> = {}
+    let result: ExecutionResult<unknown, Record<string, unknown>> = {}
     try {
       const query = await this._compiler.compile(request)
-
-      ctx.state._log ??= []
-      ctx.state._log.push(
+      console.log(
         ...query.operations
           .flatMap(o => o.selectionSet.map(f => `gql:${o.type} ${o.name ? `${o.name}/` : ""}${f}`))
       )
 
       if (accept === "text/event-stream") {
-        await this.handleGraphQLSSE(ctx, request, query)
-        return
+        return this.handleGraphQLSSE(ctx, request, query)
       }
 
-      response = await this.execute({
+      result = await this.execute({
         ...request,
-        context: ctx,
+        context: {
+          request: ctx.req,
+        },
       }, query)
     } catch (error: any) {
-      response = {
+      result = {
         errors: [error],
       }
     }
 
-    ctx.response.status = Status.OK
+    let status: any = 200
 
-    response.errors = response.errors?.slice(0, 3)
+    result.errors = result.errors?.slice(0, 3)
     if (accept === "application/graphql-response+json") {
-      ctx.response.status = getHttpStatusFromGraphQLErrors(response.errors)
+      status = getHttpStatusFromGraphQLErrors(result.errors)
     }
 
-    for (const error of (response.errors ?? [])) {
+    for (const error of (result.errors ?? [])) {
       console.error(error)
     }
 
-    ctx.response.type = `${accept}; charset=${charset}`
-    ctx.response.body = {
-      ...response,
-      errors: response.errors?.map(e => e.toJSON()),
-    }
+    const body = JSON.stringify({
+      ...result,
+      errors: result.errors?.map(e => e.toJSON?.() ?? { message: e.message }),
+    })
+
+    return ctx.body(body, status, {
+      "Content-Type": accept,
+    })
   }
 
-  private async handleGraphQLSSE(ctx: Context, request: GraphQLRequest, query: GraphQLCompiledExecutor) {
-    const stream = await ctx.sendEvents({ keepAlive: true })
+  private handleGraphQLSSE(ctx: Context, request: GraphQLRequest, query: GraphQLCompiledExecutor) {
+    return streamSSE(ctx, async stream => {
+      const iterable = await this.subscribe({
+        ...request,
+        context: {
+          request: ctx.req,
+        },
+      }, query)
 
-    const iterable = await this.subscribe({
-      ...request,
-      context: ctx,
-    }, query)
-
-    for await (const result of iterable) {
-      try {
-        stream.dispatchMessage(JSON.stringify(result))
-        if (stream.closed) {
+      for await (const result of iterable) {
+        try {
+          stream.writeSSE({ data: JSON.stringify(result) })
+          if (stream.closed) {
+            break
+          }
+        } catch (error) {
+          console.error("GQL+SSE error", error)
           break
         }
-      } catch (error) {
-        console.error("GQL+SSE error", error)
-        break
       }
-    }
 
-    try {
-      await stream.close()
-    } catch {
-      // ignore
-    }
+      try {
+        await stream.close()
+      } catch {
+        // ignore
+      }
+    })
   }
 }

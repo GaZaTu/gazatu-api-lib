@@ -72,7 +72,7 @@ const getInputTypePruner = (type: GraphQLNamedType | GraphQLInputType | undefine
   return inputPruner
 }
 
-const createGraphQLVariablesPruner = (schema: GraphQLSchema, document: DocumentNode) => {
+export const createGraphQLVariablesPruner = (schema: GraphQLSchema, document: DocumentNode) => {
   const pruneOperations = new Map<string, (variable: any) => void>()
 
   for (const docDefinition of document.definitions) {
@@ -101,5 +101,3 @@ const createGraphQLVariablesPruner = (schema: GraphQLSchema, document: DocumentN
     }
   }
 }
-
-export default createGraphQLVariablesPruner

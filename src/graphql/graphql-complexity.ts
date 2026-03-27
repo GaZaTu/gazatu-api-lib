@@ -18,7 +18,7 @@ export const Complexity = {
     const result = childComplexity * Math.ceil(limit / 3)
     return result
   }) as ComplexityEstimator,
-}
+} as const
 
 export const COMPLEXITY_ESTIMATORS = [
   complexity.fieldExtensionsEstimator(),

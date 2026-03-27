@@ -10,6 +10,7 @@ export const encodeCString = (str: string | null | undefined) => {
   return textEncoder.encode(str + "\0")
 }
 
+const textDecoder = new TextDecoder()
 export const decodeCString = (ptr: Deno.PointerValue, offset?: number) => {
   if (!ptr) {
     return null
@@ -128,9 +129,6 @@ export class CodedDataView<TArrayBuffer extends ArrayBufferLike = ArrayBufferLik
 
   public readonly littleEndian = LITTLE_ENDIAN
 
-  public readonly textEncoder = new TextEncoder()
-  public readonly textDecoder = new TextDecoder()
-
   encodeInt8(value: number) {
     this.setInt8(this.index, value)
     this.index += 1
@@ -146,8 +144,8 @@ export class CodedDataView<TArrayBuffer extends ArrayBufferLike = ArrayBufferLik
     this.index += 4
   }
 
-  encodeBigInt64(value: number) {
-    this.setBigInt64(this.index, BigInt(value), this.littleEndian)
+  encodeBigInt64(value: bigint) {
+    this.setBigInt64(this.index, value, this.littleEndian)
     this.index += 8
   }
 
@@ -158,7 +156,7 @@ export class CodedDataView<TArrayBuffer extends ArrayBufferLike = ArrayBufferLik
 
   encodeText(value: string) {
     this.encodeInt32(value.length)
-    this.textEncoder.encodeInto(value, new Uint8Array(this.buffer, this.index))
+    textEncoder.encodeInto(value, new Uint8Array(this.buffer, this.index))
     this.index += value.length
   }
 
@@ -169,7 +167,7 @@ export class CodedDataView<TArrayBuffer extends ArrayBufferLike = ArrayBufferLik
   }
 
   encodePointer(value: Deno.PointerValue) {
-    this.encodeBigInt64(Number(Deno.UnsafePointer.value(value)))
+    this.encodeBigInt64(Deno.UnsafePointer.value(value))
   }
 
   decodeInt8() {
@@ -193,7 +191,7 @@ export class CodedDataView<TArrayBuffer extends ArrayBufferLike = ArrayBufferLik
   decodeBigInt64() {
     const value = this.getBigInt64(this.index, this.littleEndian)
     this.index += 8
-    return Number(value)
+    return value
   }
 
   decodeFloat64() {
@@ -204,7 +202,7 @@ export class CodedDataView<TArrayBuffer extends ArrayBufferLike = ArrayBufferLik
 
   decodeText() {
     const length = this.decodeInt32()
-    const value = this.textDecoder.decode(new Uint8Array(this.buffer, this.index, length))
+    const value = textDecoder.decode(new Uint8Array(this.buffer, this.index, length))
     this.index += length
     return value
   }
@@ -217,6 +215,6 @@ export class CodedDataView<TArrayBuffer extends ArrayBufferLike = ArrayBufferLik
   }
 
   decodePointer() {
-    return Deno.UnsafePointer.create(BigInt(this.decodeBigInt64()))
+    return Deno.UnsafePointer.create(this.decodeBigInt64())
   }
 }

@@ -1,7 +1,7 @@
 import { GraphQLSchema, parse, printSchema } from "graphql"
 import { relative } from "node:path"
-import { codegen } from "npm:@graphql-codegen/core@4.0.2"
-import * as typescript from "npm:@graphql-codegen/typescript@4.1.6"
+import { codegen } from "npm:@graphql-codegen/core@^4.0.2"
+import * as typescript from "npm:@graphql-codegen/typescript@^4.1.6"
 import { appdataDir } from "../appinfo.ts"
 
 export const exportSchema = async (schema: GraphQLSchema) => {

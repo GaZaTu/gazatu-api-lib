@@ -3,10 +3,9 @@ import { existsSync } from "node:fs"
 import { dirname } from "node:path"
 import { appdataDir } from "./appinfo.ts"
 
-const generateCachedCryptoKey = async (keyPathWithoutExtname: string, algorithm: AesKeyGenParams | HmacKeyGenParams, extractable: boolean, keyUsages: KeyUsage[]): Promise<CryptoKey> => {
+const generateCachedCryptoKey = async (keyPath: string, algorithm: AesKeyGenParams | HmacKeyGenParams, extractable: boolean, keyUsages: KeyUsage[]): Promise<CryptoKey> => {
   const keySettings = [algorithm, extractable, keyUsages] as const
   const keyFormat = "jwk"
-  const keyPath = `${keyPathWithoutExtname}.${keyFormat}`
 
   if (existsSync(keyPath)) {
     const keyAsString = await Deno.readTextFile(keyPath)
@@ -25,7 +24,7 @@ const generateCachedCryptoKey = async (keyPathWithoutExtname: string, algorithm:
   }
 }
 
-const SIGNING_KEY = await generateCachedCryptoKey(`${appdataDir}/jwt-key`, { name: "HMAC", hash: "SHA-512" }, true, ["sign", "verify"])
+const SIGNING_KEY = await generateCachedCryptoKey(`${appdataDir}/jwt-key.jwk`, { name: "HMAC", hash: "SHA-512" }, true, ["sign", "verify"])
 
 export class JWT {
   static async create<P extends Record<string, any>>(data: P) {

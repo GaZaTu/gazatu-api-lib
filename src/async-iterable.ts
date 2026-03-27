@@ -1,4 +1,4 @@
-export class ChainableAsyncIterable<T> {
+export class AsyncIterableChain<T> {
   constructor(
     private _underlying: AsyncIterable<T>,
   ) {}
@@ -7,8 +7,8 @@ export class ChainableAsyncIterable<T> {
     return this._underlying[Symbol.asyncIterator]()
   }
 
-  filter(predicate: (value: T) => unknown): ChainableAsyncIterable<T> {
-    return new ChainableAsyncIterable<T>({
+  filter(predicate: (value: T) => unknown): AsyncIterableChain<T> {
+    return new AsyncIterableChain<T>({
       [Symbol.asyncIterator]: (): AsyncIterator<T> => {
         const iterator = this[Symbol.asyncIterator]()
         return {
@@ -35,8 +35,8 @@ export class ChainableAsyncIterable<T> {
     })
   }
 
-  map<R>(mapper: (value: T) => R): ChainableAsyncIterable<R> {
-    return new ChainableAsyncIterable<R>({
+  map<R>(mapper: (value: T) => R): AsyncIterableChain<R> {
+    return new AsyncIterableChain<R>({
       [Symbol.asyncIterator]: (): AsyncIterator<R> => {
         const iterator = this[Symbol.asyncIterator]()
         return {
@@ -59,5 +59,5 @@ export class ChainableAsyncIterable<T> {
 }
 
 export const chainAsyncIterable = <T>(underlying: AsyncIterable<T>) => {
-  return new ChainableAsyncIterable(underlying)
+  return new AsyncIterableChain(underlying)
 }

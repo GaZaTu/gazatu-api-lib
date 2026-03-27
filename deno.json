@@ -1,11 +1,12 @@
 {
   "tasks": {
-    "cache": "DENO_DIR=.deno-cache deno cache src/index.ts ; deno cache src/graphql/index.ts"
+    "cache": "DENO_DIR=.deno-cache deno cache src/index.ts",
+    "test": "DENO_DIR=.deno-cache deno run --allow-all --unstable-ffi --unstable-raw-imports test/main.ts"
   },
   "imports": {
-    "@oak/oak": "jsr:@oak/oak@^17.1.5",
+    "hono": "npm:hono@4.11.3",
     "graphql": "npm:graphql@^16.8.1",
-    "~/src/bundled/": "./src/bundled/"
+    "~/bundled/": "./test/bundled/"
   },
   "compilerOptions": {
     "strict": true,

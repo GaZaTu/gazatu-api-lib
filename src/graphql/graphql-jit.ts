@@ -1,8 +1,8 @@
 import { ExecutionResult, GraphQLError, GraphQLSchema, Kind, parse, validate } from "graphql"
 import { walk } from "jsr:@std/fs@^1.0.19/walk"
 import { createHash } from "node:crypto"
-import { compileQuery, isCompiledQuery } from "npm:graphql-jit@0.8.7"
-import createGraphQLVariablesPruner from "./createGraphQLVariablesPruner.ts"
+import { compileQuery, isCompiledQuery } from "npm:graphql-jit@^0.8.7"
+import { createGraphQLVariablesPruner } from "./createGraphQLVariablesPruner.ts"
 import { Complexity, COMPLEXITY_ESTIMATORS, getComplexity } from "./graphql-complexity.ts"
 
 export type GraphQLCompilerConfig = {
@@ -32,7 +32,7 @@ export class GraphQLCompiler {
     private _config: GraphQLCompilerConfig,
   ) {}
 
-  async loadServerQueries(serverQueriesDir = "~/src/bundled/gql") {
+  async loadServerQueries(serverQueriesDir = "~/bundled/gql") {
     try {
       const serverQueriesDirUrl = new URL(import.meta.resolve(serverQueriesDir))
       for await (const serverQuery of walk(serverQueriesDirUrl)) {

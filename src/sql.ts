@@ -1,20 +1,14 @@
 import DataLoader from "npm:dataloader@^2.2.3"
+import { Constructor, ConstructorType, Merge, PickTypeOf, RunTyped, Simplify, UnionToIntersection } from "./runtyped.ts"
 
-type AllKeys<T> = T extends any ? keyof T : never
-type PickType<T, K extends AllKeys<T>> = T extends { [k in K]?: any } ? T[K] : never
-type PickTypeOf<T, K extends string | number | symbol> = K extends AllKeys<T> ? PickType<T, K> : never
-
-type UnionToIntersection<U> = (U extends any ? (x: U) => void : never) extends ((x: infer I) => void) ? I : never
-
-type Merge<A, B> = {
-  [K in keyof A | keyof B]: K extends keyof A ? K extends keyof B ? A[K] | B[K] : A[K] : K extends keyof B ? B[K] : never
+declare module "./runtyped.ts" {
+  export interface ReflectableFieldMetadata {
+    sql?: {
+      pk?: boolean
+      ref?: Constructor
+    }
+  }
 }
-
-type Simplify<T> = T extends object ? { [K in keyof T]: Simplify<T[K]> } : T
-
-type Constructor<T = any> = new (...args: any[]) => T
-
-type ConstructorType<C> = C extends Constructor<infer T> ? T : never
 
 const SQL_COMPARISON_OPERATORS = ["=", "==", "!=", "<>", ">", ">=", "<", "<=", "in", "not in", "is", "is not", "like", "not like", "match", "glob", "ilike", "not ilike", "@>", "<@", "^@", "&&", "?", "?&", "?|", "!<", "!>", "<=>", "!~", "~", "~*", "!~*", "@@", "@@@", "!!", "<->", "regexp", "is distinct from", "is not distinct from"] as const
 const SQL_ARITHMETIC_OPERATORS = ["+", "-", "*", "/", "%", "^", "&", "|", "#", "<<", ">>"] as const
@@ -1874,7 +1868,7 @@ class ManualQueryBuilder<Tables = unknown, Selection = unknown> {
   }
 }
 
-export const knownN2MSQLEntities = new Map<`${string}|${string}`, { entity: Constructor, index: 0 | 1, ids: [string, string] }>()
+export const knownN2MSQLEntities = new Map<`${string}|${string}`, { entity: Constructor<any>, index: 0 | 1, ids: [string, string] }>()
 
 interface FieldMetadata {
   name: string
@@ -1890,33 +1884,25 @@ interface EntityMetadata {
 
 const sqlclassMap = new Map<Constructor, EntityMetadata>()
 
-const sqlpropListSymbol = Symbol()
-const sqlpropList = (metadata: DecoratorMetadataObject) => {
-  return (metadata[sqlpropListSymbol] ??= []) as FieldMetadata[]
-}
-
-export const sqlclass = (name?: string) => {
-  return (unknown: unknown, context: ClassDecoratorContext) => {
+const _sqlclass = (name?: string) => {
+  return (target: Constructor<any>, context: ClassDecoratorContext) => {
     name ??= context.name
 
     context.addInitializer(function () {
+      const fields = RunTyped.getFieldsWithMetadataEntry(target, "sql")!
+
       sqlclassMap.set(this as any, {
         name: name!,
-        fields: sqlpropList(context.metadata),
-        fieldNames: sqlpropList(context.metadata).map(f => f.name),
+        fields: [...fields].map(([name, info]) => ({ ...info, name: String(name) })),
+        fieldNames: [...fields].map(([name]) => String(name)),
       })
     })
   }
 }
 
-export const sqlprop = (options?: { pk?: boolean, ref?: Constructor }) => {
-  return (unknown: unknown, context: ClassFieldDecoratorContext) => {
-    sqlpropList(context.metadata).push({
-      name: String(context.name),
-      ...options,
-    })
-  }
-}
+export const sqlclass = Object.assign(_sqlclass, {
+  _: undefined,
+})
 
 export const defineN2MRelation = <T0, T1>(table0: Constructor<T0>, table1: Constructor<T1>) => {
   const id0 = `${table0.name}_id`
