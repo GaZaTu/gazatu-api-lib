@@ -20,7 +20,7 @@ type WorkerResult = [
 const WORKER_URL = new URL(import.meta.url)
 if (WORKER_URL.searchParams.has("worker")) {
   const database = await SQLite3.open(undefined, {
-    readonly: WORKER_URL.searchParams.has("readonly"),
+    readonly: WORKER_URL.searchParams.get("readonly") === "true",
   })
 
   self.postMessage(null)
