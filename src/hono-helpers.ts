@@ -250,6 +250,15 @@ export const getCurrentHonoServerLoad = (isRetry = false): AverageLoadInfo => {
   return currentLoad
 }
 
+export const logHonoDebugInfo = () => {
+  const load = getCurrentHonoServerLoad()
+  const loadavg = (Deno.loadavg()[0] ?? 0) / navigator.hardwareConcurrency
+  const memoryFree = Deno.systemMemoryInfo().available / 1024 / 1024 / 1024
+  const memoryUsage = Deno.memoryUsage().rss / 1024 / 1024 / 1024
+
+  console.log(`[${new Date().toISOString()} dbg] freeMem:${memoryFree.toFixed(2)}GB usedMem:${memoryUsage.toFixed(2)}GB rpm:${load.requestsPerMinute.toFixed(2)} avg:${load.averageResponseTimeInMs.toFixed(0)}ms load:${loadavg.toFixed(2)}`)
+}
+
 export const honoRateLimiter = (opts: { window: number, rate: number, burst: number }): MiddlewareHandler => {
   const counts = new Map<string, number>()
   let start = Date.now()
