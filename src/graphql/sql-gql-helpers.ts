@@ -1,7 +1,7 @@
 import { GraphQLResolveInfo } from "graphql"
 // @deno-types="npm:@types/graphql-fields"
 import graphqlFields from "npm:graphql-fields@^2.0.3"
-import { arrayOf, Constructor, nullable, RunTyped } from "../runtyped.ts"
+import { arrayOf, Constructor, nullable, RunTyped, Simplify } from "../runtyped.ts"
 import { Selector, sql } from "../sql.ts"
 import { declareGraphQLEnum, gqlclass } from "./graphql-typed.ts"
 
@@ -102,11 +102,11 @@ export const sqliteWebSearch = (search: string | null | undefined, defaultSearch
       return selector
     }
 
-    const srcTable = selector.$meta.selectedTables[0]
-    const ftsTable = sql.tbl(`${srcTable?.name}FTS`)
+    const srcTable = selector.$meta.selectedTables[0]!
+    const ftsTable = sql.tbl(`_fts_${srcTable.name}`)
 
     return selector
-      .join(ftsTable, "_fts").on(sql.expr(`_fts.rowid = ${srcTable?.alias}.rowid`))
+      .join(ftsTable, "_fts").on(sql.expr(`_fts.rowid = ${srcTable.alias}.rowid`))
       .where(sql`${ftsTable} MATCH sanitize_websearch(${search})`)
       .orderBy(sql.expr("_fts.rank"), "ASC") as any
   }
@@ -122,16 +122,23 @@ export const sqliteWebSort = (sort: { col: string, dir: SortDirections } | null 
       return selector
     }
 
-    if (!selector.$meta.addressableFieldNames.has(sort.col)) {
+    const srcTable = selector.$meta.selectedTables[0]!
+
+    let { col, dir } = sort
+    if (!col.includes(".")) {
+      col = `${srcTable.alias}.${col}`
+    }
+
+    if (!selector.$meta.addressableFieldNames.has(col)) {
       throw new Error("invalid sort col")
     }
 
-    if (!SortDirectionOptions.includes(sort.dir)) {
+    if (!SortDirectionOptions.includes(dir)) {
       throw new Error("invalid sort dir")
     }
 
     return selector
-      .orderBy(sql.expr(sort.col), sort.dir)
+      .orderBy(sql.expr(col), dir)
   }
 }
 
@@ -153,8 +160,6 @@ export const sqliteWebPaginated = (window: { offset: number, limit: number } | n
 }
 
 export const sqliteSelectDynamic = (selectedKeys: string[]) => {
-  type Simplify<T> = T extends object ? { [K in keyof T]: Simplify<T[K]> } : T
-
   return <T, S>(selector: Selector<T, S>): Selector<T, Simplify<Omit<T, "__alias">>> => {
     const tables = selector.$meta.selectedTables
     const fields = selector.$meta.addressableFields

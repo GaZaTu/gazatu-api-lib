@@ -12,7 +12,7 @@ export type GraphQLRouterConfig<C extends Record<string, any> = any> = GraphQLCo
 }
 
 export type GraphQLRouterContext = {
-  readonly request?: HonoRequest
+  readonly req?: HonoRequest
   readonly cache: {
     [key: string | symbol]: any
   }
@@ -20,7 +20,7 @@ export type GraphQLRouterContext = {
 
 export type GraphQLHttpRequest = GraphQLRequest & {
   readonly context: {
-    readonly request: GraphQLRouterContext["request"]
+    readonly req: GraphQLRouterContext["req"]
     readonly ignoreComplexity?: boolean
     readonly throwErrors?: boolean
   }
@@ -81,8 +81,8 @@ export class GraphQLRouter<C extends Record<string, any> = any> extends Hono {
   }
 
   private async createGraphQLContext(context: GraphQLHttpRequest["context"]) {
-    return Object.assign(await this._config.createContext(context.request), {
-      request: context.request,
+    return Object.assign(await this._config.createContext(context.req), {
+      req: context.req,
       cache: {},
       ignoreComplexity: context.ignoreComplexity,
     })
@@ -135,18 +135,17 @@ export class GraphQLRouter<C extends Record<string, any> = any> extends Hono {
     // })
 
     this.post(this._config.path, async ctx => {
+      const contentType = ctx.req.header("Content-Type")
+
       let body = null as GraphQLRequest | null
-      switch (ctx.req.header("Content-Type")) {
-      case "form-data":
-        try {
+      try {
+        if (contentType.startsWith("multipart/form-data")) {
           body = parseGraphQLFormData(await ctx.req.formData())
-        } catch (error: any) {
-          throw new HTTPException(400, error)
+        } else {
+          body = await ctx.req.json()
         }
-        break
-      default:
-        body = await ctx.req.json()
-        break
+      } catch (error: any) {
+        throw new HTTPException(400, error)
       }
 
       return await this.handleGraphQLRequest(ctx, body!)
@@ -203,7 +202,7 @@ export class GraphQLRouter<C extends Record<string, any> = any> extends Hono {
       result = await this.execute({
         ...request,
         context: {
-          request: ctx.req,
+          req: ctx.req,
         },
       }, query)
     } catch (error: any) {
@@ -238,7 +237,7 @@ export class GraphQLRouter<C extends Record<string, any> = any> extends Hono {
       const iterable = await this.subscribe({
         ...request,
         context: {
-          request: ctx.req,
+          req: ctx.req,
         },
       }, query)
 

@@ -1,4 +1,4 @@
-import { Context, MiddlewareHandler } from "hono"
+import { Context, HonoRequest, MiddlewareHandler } from "hono"
 import { getConnInfo } from "hono/deno"
 import { HTTPException } from "hono/http-exception"
 import { cyan, green, red, yellow } from "jsr:@std/fmt@^1.0.8/colors"
@@ -23,18 +23,27 @@ const getColorForHttpStatus = (status: number) => {
   return red
 }
 
-export const honoSetIp = (behindReverseProxy = false): MiddlewareHandler => {
+const honoRemoteAddressSymbol = Symbol()
+
+export const honoSetRemoteAddress = (behindReverseProxy = false): MiddlewareHandler => {
   if (behindReverseProxy) {
     return async (ctx, next) => {
-      ctx.set("IP", ctx.req.header("X-Forwarded-For"))
+      const cache = ctx.req as Record<symbol, any>
+      cache[honoRemoteAddressSymbol] = () => ctx.req.header("X-Forwarded-For")?.split(",")[0]
       await next()
     }
   } else {
     return async (ctx, next) => {
-      ctx.set("IP", getConnInfo(ctx).remote.address)
+      const cache = ctx.req as Record<symbol, any>
+      cache[honoRemoteAddressSymbol] = () => getConnInfo(ctx).remote.address
       await next()
     }
   }
+}
+
+export const honoRemoteAddress = (request: HonoRequest): string | undefined => {
+  const cache = request as Record<symbol, any>
+  return cache[honoRemoteAddressSymbol]()
 }
 
 export const honoResponseTime = (): MiddlewareHandler => {
@@ -51,7 +60,7 @@ export const honoResponseTime = (): MiddlewareHandler => {
 
 export const honoLogger = (): MiddlewareHandler => {
   const makeLogString = (ctx: Context, msg: string, date = new Date()) => {
-    return `[${date.toISOString()} http] ${ctx.get("IP")} "${ctx.req.method} ${ctx.req.path}" ${msg}`
+    return `[${date.toISOString()} http] ${honoRemoteAddress(ctx.req)} "${ctx.req.method} ${ctx.req.path}" ${msg}`
   }
 
   return async (ctx, next) => {
@@ -68,34 +77,6 @@ export const honoLogger = (): MiddlewareHandler => {
 
       const logString = makeLogString(ctx, `${getColorForHttpStatus(status)(String(status)) } ${responseTime}`)
       console.log(logString)
-    }
-  }
-}
-
-export const honoJsonError = (options?: { stacktrace?: boolean }): MiddlewareHandler => {
-  return async (ctx, next) => {
-    try {
-      await next()
-
-      if (!ctx.res.status || ctx.res.status === 404) {
-        throw new HTTPException(404)
-      }
-
-      return undefined
-    } catch (error: any) {
-      const status = error.status ?? 500
-      if (status === 500) {
-        console.error(error)
-      }
-
-      return ctx.json({
-        errors: [{
-          name: error.name,
-          message: error.message,
-          status: error.status,
-          stack: options?.stacktrace ? error.stack : undefined,
-        }],
-      }, status)
     }
   }
 }

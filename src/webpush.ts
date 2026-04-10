@@ -4,47 +4,51 @@ import { existsSync } from "node:fs"
 import webpush from "npm:web-push@^3.6.7"
 import { appdataDir } from "./appinfo.ts"
 
+export const WebPushError = webpush.WebPushError
+
 type VapidDetails = Readonly<webpush.VapidKeys> & {
   readonly subject: string
 }
 
 interface IPushSubscription {
   readonly data: webpush.PushSubscription
-  readonly device?: "phone" | "pc"
-  readonly onError: (error: unknown) => void
+  readonly device?: string
+  readonly onError: (error: unknown) => void | Promise<void>
 }
 
-interface IUser {
+interface IPushUser {
   readonly id: any
   readonly pushSubscriptions: IPushSubscription[]
 }
 
-export class WebPush<User extends IUser> {
-  private _vapidDetails?: VapidDetails
+export class WebPush<User extends IPushUser> {
+  private readonly _vapidDetails: VapidDetails
 
   constructor(
-    public readonly findUser: (userId: any) => Promise<User | undefined>,
-  ) {}
-
-  /**
-   * @param subject This must be either a 'https:' URL or a 'mailto:' address.
-   * @param keys
-   */
-  async initialize(subject: string | URL, keys?: webpush.VapidKeys) {
-    if (!keys) {
+    private readonly options: {
+      subject: string | URL
+      keys?: webpush.VapidKeys
+      findUser: (userId: any) => Promise<User | undefined>
+    },
+  ) {
+    if (!options.keys) {
       const path = `${appdataDir}/vapid.json`
       if (existsSync(path)) {
-        keys = JSON.parse(await Deno.readTextFile(path))
+        options.keys = JSON.parse(Deno.readTextFileSync(path))
       } else {
-        keys = webpush.generateVAPIDKeys()
-        await Deno.writeTextFile(path, JSON.stringify(keys))
+        options.keys = webpush.generateVAPIDKeys()
+        Deno.writeTextFileSync(path, JSON.stringify(options.keys))
       }
     }
 
     this._vapidDetails = {
-      ...keys!,
-      subject: String(subject),
+      ...options.keys!,
+      subject: String(options.subject),
     }
+  }
+
+  async findUser(userId: any): Promise<User | undefined> {
+    return await this.options.findUser(userId)
   }
 
   async sendNotification(subscription: webpush.PushSubscription, payload?: string, options?: webpush.RequestOptions) {
@@ -54,7 +58,7 @@ export class WebPush<User extends IUser> {
     })
   }
 
-  async sendUserNotification(user: Partial<IUser> | undefined, payload?: string, options?: webpush.RequestOptions) {
+  async sendUserNotification(user: Partial<IPushUser> | undefined, payload?: string, options?: webpush.RequestOptions) {
     if (!user) {
       return
     }
@@ -66,14 +70,14 @@ export class WebPush<User extends IUser> {
       }
     }
 
-    for (const subscription of user.pushSubscriptions!) {
+    for (const subscription of (user.pushSubscriptions ?? [])) {
       try {
         const { statusCode } = await this.sendNotification(subscription.data, payload, options)
         if (statusCode !== 200) {
           throw new HTTPException(statusCode as any)
         }
       } catch (error) {
-        subscription.onError(error)
+        await subscription.onError(error)
       }
     }
   }

@@ -33,7 +33,6 @@ if (WORKER_URL.searchParams.has("worker")) {
       database.selectEncoded(inputPtr, outputPtr)
     } catch (error: any) {
       if (error instanceof Error) {
-        console.log(error)
         result[0] = [
           error.message,
           error.stack,

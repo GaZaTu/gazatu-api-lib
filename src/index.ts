@@ -1,4 +1,5 @@
 export * from "./graphql/index.ts"
+export * from "./sqlite3/SQLite3.ts"
 export * from "./tcc/index.ts"
 
 export * from "./appinfo.ts"

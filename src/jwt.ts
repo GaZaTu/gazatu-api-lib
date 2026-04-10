@@ -3,28 +3,56 @@ import { existsSync } from "node:fs"
 import { dirname } from "node:path"
 import { appdataDir } from "./appinfo.ts"
 
-const generateCachedCryptoKey = async (keyPath: string, algorithm: AesKeyGenParams | HmacKeyGenParams, extractable: boolean, keyUsages: KeyUsage[]): Promise<CryptoKey> => {
-  const keySettings = [algorithm, extractable, keyUsages] as const
-  const keyFormat = "jwk"
+export async function lazyCryptoKey(keyPath: string, algorithm: RsaHashedKeyGenParams | EcKeyGenParams, extractable: boolean, keyUsages: KeyUsage[]): Promise<CryptoKeyPair>
+export async function lazyCryptoKey(keyPath: string, algorithm: AesKeyGenParams | HmacKeyGenParams, extractable: boolean, keyUsages: KeyUsage[]): Promise<CryptoKey>
+export async function lazyCryptoKey(keyPath: string, algorithm: AlgorithmIdentifier, extractable: boolean, keyUsages: KeyUsage[]): Promise<CryptoKeyPair | CryptoKey> {
+  type StoredJsonWebKey = {
+    type: "single"
+    key: JsonWebKey
+  } | {
+    type: "private-public"
+    privateKey: JsonWebKey
+    publicKey: JsonWebKey
+  }
 
   if (existsSync(keyPath)) {
-    const keyAsString = await Deno.readTextFile(keyPath)
-    const keyAsJWK = JSON.parse(keyAsString) as JsonWebKey
+    const json = await Deno.readTextFile(keyPath)
+    const jwk = JSON.parse(json) as StoredJsonWebKey
 
-    const key = await crypto.subtle.importKey(keyFormat, keyAsJWK, ...keySettings)
-    return key
+    if (jwk.type === "single") {
+      const key = await crypto.subtle.importKey("jwk", jwk.key, algorithm, extractable, keyUsages)
+      return key
+    } else {
+      return {
+        privateKey: await crypto.subtle.importKey("jwk", jwk.privateKey, algorithm, extractable, jwk.privateKey.key_ops as any),
+        publicKey: await crypto.subtle.importKey("jwk", jwk.publicKey, algorithm, extractable, jwk.publicKey.key_ops as any),
+      }
+    }
   } else {
-    const key = await crypto.subtle.generateKey(...keySettings) as CryptoKey
+    const key = await crypto.subtle.generateKey(algorithm, extractable, keyUsages)
 
-    const keyAsJWK = await crypto.subtle.exportKey(keyFormat, key)
+    let jwk: StoredJsonWebKey
+    if (key instanceof CryptoKey) {
+      jwk = {
+        type: "single",
+        key: await crypto.subtle.exportKey("jwk", key),
+      }
+    } else {
+      jwk = {
+        type: "private-public",
+        privateKey: await crypto.subtle.exportKey("jwk", key.privateKey),
+        publicKey: await crypto.subtle.exportKey("jwk", key.publicKey),
+      }
+    }
+
     await Deno.mkdir(dirname(keyPath), { recursive: true })
-    await Deno.writeTextFile(keyPath, JSON.stringify(keyAsJWK))
+    await Deno.writeTextFile(keyPath, JSON.stringify(jwk))
 
     return key
   }
 }
 
-const SIGNING_KEY = await generateCachedCryptoKey(`${appdataDir}/jwt-key.jwk`, { name: "HMAC", hash: "SHA-512" }, true, ["sign", "verify"])
+const SIGNING_KEY = await lazyCryptoKey(`${appdataDir}/jwt-key.jwk`, { name: "HMAC", hash: "SHA-512" }, true, ["sign", "verify"])
 
 export class JWT {
   static async create<P extends Record<string, any>>(data: P) {

@@ -241,6 +241,12 @@ type MakeSingleSelection<Ts, Fs> = Fs extends SqlExprFactory<Ts, infer V, infer 
 } : never
 type MakeSelection<Ts, Fs> = UnionToIntersection<(Fs extends "*" ? ExtractAliasTable<Ts> : (Fs extends `${infer A}.*` ? ExtractAliasTable<Ts, A> : MakeSingleSelection<Ts, Fs>))>
 
+type SelectionMap<Ts> = Record<string, SelectableField<Ts>>
+
+type MakeSelectionFromMap<Ts, Map> = {
+  [K in keyof Map]: MakeSingleSelection<Ts, Map[K]>[keyof MakeSingleSelection<Ts, Map[K]>]
+}
+
 type InsertableValues<T> = Partial<Merge<ExtractAliasTable<T>, { [F in keyof ExtractAliasTable<T>]: SqlExpr<PickTypeOf<T, F>> | SqlExprFactory<T, PickTypeOf<T, F>> }>>
 
 // interface Joinable<Tables> {
@@ -375,7 +381,7 @@ class ConflictHandler<Table, Selection> {
   }
 }
 
-export class Selector<Tables = unknown, Selection = unknown> {
+export class Selector<Tables = never, Selection = unknown> {
   private _data: QueryBuilderData = {}
   private _tables: [Constructor, string?][] = []
 
@@ -410,8 +416,8 @@ export class Selector<Tables = unknown, Selection = unknown> {
   }
 
   from<NewTable>(table: SqlExpr): Selector<Tables>
-  from<NewTable>(table: Constructor<NewTable>): Selector<Exclude<Tables, unknown> | AliasedTable<NewTable>>
-  from<NewTable, A extends string>(table: Constructor<NewTable>, alias: A): Selector<Exclude<Tables, unknown> | AliasedTable<NewTable, A>>
+  from<NewTable>(table: Constructor<NewTable>): Selector<Exclude<Tables, never> | AliasedTable<NewTable>>
+  from<NewTable, A extends string>(table: Constructor<NewTable>, alias: A): Selector<Exclude<Tables, never> | AliasedTable<NewTable, A>>
   from(table: Constructor | SqlExpr, alias?: string): Selector<any> {
     if (typeof table === "function") {
       this._tables.push([table, alias])
@@ -450,9 +456,11 @@ export class Selector<Tables = unknown, Selection = unknown> {
     return this as any
   }
 
-  // select2<NewSelection extends Record<string, SelectableFields<Tables>>>(fields: NewSelection): Selector<Tables, Simplify<Selection>> {
-  //   return this as any
-  // }
+  selectAs<NewSelectionMap extends Record<string, SelectableField<Tables>>>(fieldsMap: NewSelectionMap): Selector<Tables, Simplify<Selection & MakeSelectionFromMap<Tables, NewSelectionMap>>> {
+    const fields = Object.entries(fieldsMap)
+      .map(([alias, f]) => unpackSelectable(f)!.as(alias))
+    return this.select(...fields) as any
+  }
 
   where(lhs?: AddressableField<Tables>, op?: SqlComparisonOperator, rhs?: AddressableField<Tables>): Selector<Tables, Selection> {
     const expr = createWhereExpr(lhs, op, rhs)
@@ -485,6 +493,10 @@ export class Selector<Tables = unknown, Selection = unknown> {
 
   whereIn(field: AddressableField<Tables>, makeSub: (sub: Selector<Tables>) => Selector): Selector<Tables, Selection> {
     return this.where(field, "in", makeSub(new Selector<Tables>(this._compiler)).asExpr())
+  }
+
+  whereNotIn(field: AddressableField<Tables>, makeSub: (sub: Selector<Tables>) => Selector): Selector<Tables, Selection> {
+    return this.where(field, "not in", makeSub(new Selector<Tables>(this._compiler)).asExpr())
   }
 
   groupBy(...fields: AddressableField<Tables>[]): Selector<Tables, Selection> {
@@ -631,7 +643,7 @@ export class Selector<Tables = unknown, Selection = unknown> {
     return [slice, count]
   }
 
-  asCount(): SqlExpr<{ ["count(*)"]: number }> {
+  asCount(): SqlExpr<number> {
     this._data.selection = [sql`count(*)`]
 
     return this.asExpr() as any
@@ -657,7 +669,7 @@ export class Selector<Tables = unknown, Selection = unknown> {
     }
   }
 
-  asExpr(): SqlExpr<Selection[]> {
+  asExpr(): SqlExpr<Selection[keyof Selection]> {
     return new SqlExpr(`(${this.query})`, this.params)
   }
 
@@ -737,6 +749,10 @@ export class Selector<Tables = unknown, Selection = unknown> {
     } finally {
       this._prevConditionMap.set(this._conditionNesting, condition)
     }
+  }
+
+  $ifBoolean<NewTables, NewSelection>(condition: unknown, onTrue: (qb: Selector<Tables, Selection>) => Selector<NewTables, NewSelection>): Selector<Tables | NewTables, Simplify<Selection & Partial<NewSelection>>> {
+    return this.$if(typeof condition === "boolean", onTrue)
   }
 
   $elseIf<NewTables, NewSelection>(condition: unknown, onTrue: (qb: Selector<Tables, Selection>) => Selector<NewTables, NewSelection>): Selector<Tables | NewTables, Simplify<Selection & Partial<NewSelection>>> {
@@ -1234,13 +1250,21 @@ export class DatabaseAccess {
     }
   }
 
-  withEnv(env: () => Promise<Record<string, string>>) {
+  withEnv(env: Record<string, string> | Promise<Record<string, string>>) {
     return new DatabaseAccess({
       parent: this,
       write: async (q, v, e) => {
-        return await this.write!(q, v, { ...e, ...(await env()) })
+        return await this.write!(q, v, { ...(await env), ...e })
       },
     })
+  }
+
+  select<NewSelection extends SelectableField<unknown>[]>(...fields: NewSelection): Selector<unknown, Simplify<unknown & MakeSelection<unknown, NewSelection[number]>>> {
+    return new Selector(this.compiler, this.read).select(...fields)
+  }
+
+  selectAs<NewSelectionMap extends Record<string, SelectableField<unknown>>>(fieldsMap: NewSelectionMap): Selector<unknown, Simplify<unknown & MakeSelectionFromMap<unknown, NewSelectionMap>>> {
+    return new Selector(this.compiler, this.read).selectAs(fieldsMap)
   }
 
   from<NewTable>(table: Constructor<NewTable>): Selector<AliasedTable<NewTable>>
@@ -1658,6 +1682,22 @@ export class DatabaseAccess {
 
     const maxBatchSize = 128
 
+    const count = async (id0: string | number | null | (string | number)[], id1: string | number | null | (string | number)[]) => {
+      if (id0 === null && id1 === null) {
+        return 0
+      }
+
+      return await this
+        .from(N2M.entity)
+        .$if(id0 !== null, d => d
+          .where(N2M!.ids[0], "in", sql.arg(Array.isArray(id0) ? id0 : [id0]))
+        )
+        .$if(id1 !== null, d => d
+          .where(N2M!.ids[1], "in", sql.arg(Array.isArray(id1) ? id1 : [id1]))
+        )
+        .count()
+    }
+
     async function findManyWithDataLoader(id0: string | number, id1: null): Promise<T1[]>
     async function findManyWithDataLoader(id0: null, id1: string | number): Promise<T0[]>
     async function findManyWithDataLoader(id0: string | number | null, id1: string | number | null): Promise<T0[] | T1[]> {
@@ -1740,7 +1780,7 @@ WHERE ${expr(n2mIdField)} IN ${[...Array(maxBatchSize).keys()]}
         .execute(env)
     }
 
-    const deleteMany = async (id0: string | number | null, id1: string | number | null | (string | number)[], env?: Record<string, string>) => {
+    const deleteMany = async (id0: string | number | null | (string | number)[], id1: string | number | null | (string | number)[], env?: Record<string, string>) => {
       if (id0 === null && id1 === null) {
         return 0
       }
@@ -1776,6 +1816,7 @@ WHERE ${expr(n2mIdField)} IN ${[...Array(maxBatchSize).keys()]}
 
     return {
       // select,
+      count,
       findMany: findManyWithDataLoader,
       insert,
       insertMany,

@@ -20,13 +20,15 @@ if (sqlitezatuStats?.size !== libsqlitezatu_so.byteLength) {
 }
 
 export class SQLite3 extends DatabaseSync {
+  static readonly DEFAULT_PATH = `${appdataDir}/database.sqlite3`
+
   private _optimizer = setInterval(() => this.optimize(), 1000 * 60 * 60 * 1)
 
   private _selectEncoded: StatementSync
 
   private constructor(path?: PathLike, opts?: { readonly?: boolean }) {
     if (!path) {
-      path = `${appdataDir}/database.sqlite3`
+      path = SQLite3.DEFAULT_PATH
     }
 
     super(path, {

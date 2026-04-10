@@ -349,8 +349,10 @@ export function gqlclassUnwrapIntoGraphQLType(type: Constructor, kind: "output" 
     let output = gqlclassMap.get(type)?.output
     if (!output) {
       output = new GraphQLUnionType({
-        name: `UnionOf_${type.ofTypes.map(t => t.name).join("_")}`,
-        types: type.ofTypes.map(t => gqlclassUnwrapIntoGraphQLType(t, "output") as any),
+        name: type.publicName ?? `UnionOf_${type.ofTypes.map(t => t.name).join("_")}`,
+        types: type.ofTypes
+          .map(t => gqlclassUnwrapIntoGraphQLType(t, "output") as GraphQLObjectType)
+          .map(t => t instanceof GraphQLNonNull ? t.ofType : t),
       })
       gqlclassMap.set(type, { output })
     }

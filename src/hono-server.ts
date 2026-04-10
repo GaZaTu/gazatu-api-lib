@@ -5,7 +5,7 @@ import { cors } from "hono/cors"
 import { serveStatic } from "hono/deno"
 import { HTTPException } from "hono/http-exception"
 import { existsSync } from "node:fs"
-import { honoJsonError, honoLoadCounter, honoLogger, honoResponseTime, honoSetIp } from "./hono-helpers.ts"
+import { honoLoadCounter, honoLogger, honoSetRemoteAddress, honoResponseTime } from "./hono-helpers.ts"
 
 export type HttpServerConfig = {
   development?: boolean
@@ -21,7 +21,7 @@ export type HttpServerConfig = {
 export const createHonoApp = (config: HttpServerConfig, middlewares: (Hono | MiddlewareHandler | undefined)[]) => {
   const app = new Hono()
 
-  app.use(honoSetIp(config.behindProxy))
+  app.use(honoSetRemoteAddress(config.behindProxy))
   app.use(honoLogger())
   app.use(honoLoadCounter())
 
@@ -40,10 +40,6 @@ export const createHonoApp = (config: HttpServerConfig, middlewares: (Hono | Mid
   app.use(cors({
     origin: "*",
     allowHeaders: ["Content-Type", "Authorization"],
-  }))
-
-  app.use(honoJsonError({
-    stacktrace: config.development,
   }))
 
   if (config.behindProxy) {
@@ -94,6 +90,30 @@ export const createHonoApp = (config: HttpServerConfig, middlewares: (Hono | Mid
     }))
   }
 
+  app.notFound(ctx => {
+    return ctx.json({
+      errors: [{
+        message: "Not Found",
+      }],
+    }, 404)
+  })
+
+  app.onError((err, ctx) => {
+    const status = err.status ?? 500
+    if (status === 500) {
+      console.error(err)
+    }
+
+    return ctx.json({
+      errors: [{
+        name: err.name,
+        message: err.message,
+        status: err.status,
+        stack: config.development ? err.stack : undefined,
+      }],
+    }, status)
+  })
+
   return app
 }
 
@@ -105,7 +125,14 @@ export const listen = (config: HttpServerConfig, middlewares: (Hono | Middleware
     Deno.serve({
       hostname: config.host,
       port: config.port,
-      handler: app.fetch,
+      handler: config.behindProxy ? req => {
+        const url = new URL(req.url)
+        url.protocol = req.headers.get("X-Forwarded-Proto") ?? url.protocol
+        url.host = req.headers.get("X-Forwarded-Host") ?? url.host
+
+        const res = app.fetch(new Request(url, req))
+        return res
+      } : app.fetch,
       onListen: resolve,
     })
   })

@@ -494,9 +494,10 @@ export class TCCWorker extends Worker {
   async dlopen<const S extends Deno.ForeignLibraryInterface>(message: TCCWorkerMessage & { symbols: S }) {
     const temp = !message.outputPath
     const file = temp ? await Deno.makeTempFile() : message.outputPath!
+    const args = message.arguments ?? []
     const info = await this.compile({
       ...message,
-      arguments: [...(message.arguments ?? []), "-shared", `-o${file}`],
+      arguments: [...args, "-shared", `-o${file}`],
     })
 
     if (info.code !== 0) {

@@ -12,7 +12,7 @@ export const exportSchema = async (schema: GraphQLSchema) => {
 
   const schemaAsTSFile = `${appdataDir}/schema.gql.ts`
   const schemaAsTS = await codegen({
-    schema: parse(printSchema(schema)),
+    schema: parse(schemaAsGQL),
     filename: schemaAsTSFile,
     documents: [],
     config: {},

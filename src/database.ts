@@ -8,7 +8,7 @@ import { DatabaseAccess } from "./sql.ts"
 import { SQLite3 } from "./sqlite3/SQLite3.ts"
 import { SQLQuery } from "./sqlite3/SQLite3FastQuery.ts"
 
-const setupDatabase = async () => {
+export const setupDefaultDatabase = async (upgradeScripts?: { version: number, url: URL }[]) => {
   using database = await SQLite3.open()
   console.log(`using SQLite version ${database.libversion}`)
 
@@ -16,25 +16,27 @@ const setupDatabase = async () => {
     throw new Error("minimum required SQLite version is 3.38.0")
   }
 
-  const sqlDir = "~/bundled/sql"
-  const sqlDirUrl = new URL(import.meta.resolve(sqlDir))
+  if (!upgradeScripts) {
+    upgradeScripts = []
 
-  const upgradeScripts = []
-  for await (const dirEntry of walk(sqlDirUrl)) {
-    if (!dirEntry.isFile) {
-      continue
+    const sqlDir = "~/bundled/sql"
+    const sqlDirUrl = new URL(import.meta.resolve(sqlDir))
+    for await (const dirEntry of walk(sqlDirUrl)) {
+      if (!dirEntry.isFile) {
+        continue
+      }
+
+      const match = /^v(\d+).sql$/.exec(dirEntry.name)
+      if (!match) {
+        continue
+      }
+
+      upgradeScripts.push({
+        version: Number(match[1]),
+        url: new URL(import.meta.resolve(dirEntry.path)),
+      })
+      upgradeScripts.sort((a, b) => a.version - b.version)
     }
-
-    const match = /^v(\d+).sql$/.exec(dirEntry.name)
-    if (!match) {
-      continue
-    }
-
-    upgradeScripts.push({
-      version: Number(match[1]),
-      url: new URL(import.meta.resolve(dirEntry.path)),
-    })
-    upgradeScripts.sort((a, b) => a.version - b.version)
   }
 
   const initialVersion = database.user_version
@@ -76,7 +78,8 @@ const createEnqueueFunction = (queue: fastq.queueAsPromised<SQLQuery, any[]>) =>
     try {
       return await queue.push(task)
     } catch (cause: any) {
-      const error = new Error(cause.message, { cause })
+      console.log(task[0])
+      const error = Object.assign(new Error(cause.message, { cause }))
       // if (cause instanceof DatabaseError) {
       //   error.offset = cause.offset
       // }
@@ -128,7 +131,7 @@ const createWriter = async (onchange: (payload: { tables: string[] }) => void) =
 }
 
 export class LocalSQLite3DatabaseAccess extends DatabaseAccess {
-  readonly hooks = new PubSub<{
+  readonly events = new PubSub<{
     "change": { tables: string[] }
   }>()
 
@@ -136,14 +139,14 @@ export class LocalSQLite3DatabaseAccess extends DatabaseAccess {
     super({
       compiler: new SQLite3QueryCompiler(),
       createReader: async () => {
-        await setupDatabase()
+        await setupDefaultDatabase()
         return await createReader()
       },
       createWriter: async () => {
         const onchange = (payload: { tables: string[] }) => {
           this.clearCache(...payload.tables)
           setTimeout(() => {
-            this.hooks.publish("change", payload)
+            this.events.publish("change", payload)
           })
         }
         return await createWriter(onchange)

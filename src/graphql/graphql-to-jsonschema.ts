@@ -1,5 +1,5 @@
 import { DocumentNode, FieldNode, GraphQLScalarType, GraphQLSchema, InputObjectTypeDefinitionNode, InterfaceTypeDefinitionNode, Kind, ListTypeNode, NamedTypeNode, NonNullTypeNode, ObjectTypeDefinitionNode, SelectionSetNode, TypeNode } from "graphql"
-import type { JSONSchema7 } from "npm:@types/json-schema"
+import type { JSONSchema7 } from "npm:@types/json-schema@7.0.15"
 
 const convertObjectType = (schema: GraphQLSchema, typeNode: ObjectTypeDefinitionNode | InterfaceTypeDefinitionNode | InputObjectTypeDefinitionNode, node: SelectionSetNode, result: JSONSchema7) => {
   result.type = ["null", "object"]

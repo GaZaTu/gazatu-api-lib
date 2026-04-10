@@ -121,6 +121,7 @@ const isRecordType = (type: Constructor): type is _RecordOf => {
 type _UnionOf<Cs extends Constructor[] = Constructor[]> = Constructor<UnpackAdvancedConstructorType<Cs[number]>> & {
   readonly isUnion: true
   readonly ofTypes: Cs
+  publicName: string | undefined
 }
 
 class __UnionOf {}
@@ -128,6 +129,7 @@ export const unionOf = <Cs extends Constructor[]>(...types: Cs): _UnionOf<Cs> =>
   return class extends __UnionOf {
     static readonly isUnion = true
     static readonly ofTypes = types
+    static publicName = undefined
   } as any
 }
 
