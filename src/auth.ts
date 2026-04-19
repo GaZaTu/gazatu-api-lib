@@ -96,9 +96,13 @@ export class AuthenticationHelper<User extends IAuthenticationUser> {
     const { password, ...userWithoutPassword } = user
 
     return {
-      token: await JWT.create<UserToken>({ userId: user.id }),
+      token: await this.createUserToken(user),
       user: userWithoutPassword,
     }
+  }
+
+  async createUserToken(user: Pick<User, "id">) {
+    return await JWT.create<UserToken>({ userId: user.id })
   }
 }
 
@@ -123,7 +127,7 @@ export class AuthorizationHelper<User extends IAuthorizationUser> {
     this._knownUsers.clear()
   }
 
-  async findUserByRequest(request: HonoRequest | undefined) {
+  async findUserByRequest(request: HonoRequest | undefined, extractToken = (request: HonoRequest) => request.header("Authorization")) {
     if (!request) {
       return undefined
     }
@@ -139,7 +143,7 @@ export class AuthorizationHelper<User extends IAuthorizationUser> {
       return existing
     }
 
-    const authHeader = request.header("Authorization")
+    const authHeader = extractToken(request)
     if (!authHeader) {
       cache[currentUserFailedSymbol] = true
       return undefined

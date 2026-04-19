@@ -5,7 +5,7 @@ import { cors } from "hono/cors"
 import { serveStatic } from "hono/deno"
 import { HTTPException } from "hono/http-exception"
 import { existsSync } from "node:fs"
-import { honoLoadCounter, honoLogger, honoSetRemoteAddress, honoResponseTime } from "./hono-helpers.ts"
+import { honoLoadCounter, honoLogger, honoResponseTime, honoSetRemoteAddress } from "./hono-helpers.ts"
 
 export type HttpServerConfig = {
   development?: boolean
@@ -31,7 +31,7 @@ export const createHonoApp = (config: HttpServerConfig, middlewares: (Hono | Mid
 
   app.use(compress())
   app.use(bodyLimit({
-    maxSize: 1024 * 256,
+    maxSize: 1024 * 1024 * 50,
     onError: ctx => {
       throw new HTTPException(413)
     },
@@ -98,7 +98,7 @@ export const createHonoApp = (config: HttpServerConfig, middlewares: (Hono | Mid
     }, 404)
   })
 
-  app.onError((err, ctx) => {
+  app.onError((err: any, ctx) => {
     const status = err.status ?? 500
     if (status === 500) {
       console.error(err)
