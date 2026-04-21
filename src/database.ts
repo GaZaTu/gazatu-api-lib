@@ -8,7 +8,7 @@ import { DatabaseAccess } from "./sql.ts"
 import { SQLite3 } from "./sqlite3/SQLite3.ts"
 import { SQLQuery } from "./sqlite3/SQLite3FastQuery.ts"
 
-export const setupDefaultDatabase = async (upgradeScripts?: { version: number, url: URL }[]) => {
+export const setupDefaultDatabase = async (upgradeScripts?: { version: number, path: string }[]) => {
   using database = await SQLite3.open()
   console.log(`using SQLite version ${database.libversion}`)
 
@@ -33,7 +33,7 @@ export const setupDefaultDatabase = async (upgradeScripts?: { version: number, u
 
       upgradeScripts.push({
         version: Number(match[1]),
-        url: new URL(import.meta.resolve(dirEntry.path)),
+        path: dirEntry.path,
       })
       upgradeScripts.sort((a, b) => a.version - b.version)
     }
@@ -52,7 +52,7 @@ export const setupDefaultDatabase = async (upgradeScripts?: { version: number, u
       }
 
       try {
-        const script = await Deno.readTextFile(upgradeScript.url)
+        const script = await Deno.readTextFile(upgradeScript.path)
 
         database.transaction(() => {
           database.exec(script)
