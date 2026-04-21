@@ -10,7 +10,7 @@ export type ConstructorType<C> =
   C
 
 export type Simplify<T> =
-  T extends object ? T extends File ? T : T extends Uint8Array ? T : { [K in keyof T]: Simplify<T[K]> } :
+  T extends object ? T extends File | Uint8Array ? T : { [K in keyof T]: Simplify<T[K]> } :
   T
 
 export type AllKeys<T> = T extends any ? keyof T : never
