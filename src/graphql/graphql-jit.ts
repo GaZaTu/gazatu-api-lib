@@ -4,6 +4,7 @@ import { createHash } from "node:crypto"
 import { compileQuery, isCompiledQuery } from "npm:graphql-jit@^0.8.7"
 import { createGraphQLVariablesPruner } from "./createGraphQLVariablesPruner.ts"
 import { Complexity, COMPLEXITY_ESTIMATORS, getComplexity } from "./graphql-complexity.ts"
+import { basename } from "node:path"
 
 export type GraphQLCompilerConfig = {
   schema: GraphQLSchema
@@ -37,19 +38,19 @@ export class GraphQLCompiler {
       const serverQueriesDirUrl = new URL(import.meta.resolve(serverQueriesDir))
       for await (const serverQuery of walk(serverQueriesDirUrl)) {
         if (serverQuery.isFile) {
+          const serverQueryKey = `$${basename(serverQuery.path)}`
           const serverQueryUrl = new URL(import.meta.resolve(serverQuery.path))
-          const serverQueryKey = "$" + String(serverQueryUrl).replace(String(serverQueriesDirUrl), "")
-          this._serverQueries.set(serverQueryKey, serverQueryUrl)
+          this._serverQueries.set(serverQueryKey, await Deno.readFile(serverQueryUrl))
         }
       }
     } catch {
       // ignore
     }
-    for (const [query] of this._serverQueries) {
+    for (const [key, query] of this._serverQueries) {
       try {
         await this.compile({ query })
       } catch (cause) {
-        throw new Error(`Cannot compile query '${query}'`, { cause })
+        throw new Error(`Cannot compile query '${key}'`, { cause })
       }
     }
   }
